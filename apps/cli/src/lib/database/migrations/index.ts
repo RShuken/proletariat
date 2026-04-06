@@ -29,6 +29,7 @@ import { transitionMap } from './0020_transition_map.js'
 import { notificationSystem } from './0021_notification_system.js'
 import { hookModeTiers } from './0022_hook_mode_tiers.js'
 import { webhookProvider } from './0023_webhook_provider.js'
+import { tokenTracking } from './0024_token_tracking.js'
 
 /**
  * Ordered list of all migrations.
@@ -58,4 +59,5 @@ export const ALL_MIGRATIONS: Migration[] = [
   notificationSystem,
   hookModeTiers,
   webhookProvider,
+  tokenTracking,
 ]

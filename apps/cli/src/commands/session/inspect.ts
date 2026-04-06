@@ -5,7 +5,7 @@ import type Database from 'better-sqlite3'
 import { styles } from '../../lib/styles.js'
 import { getWorkspaceInfo } from '../../lib/agents/commands.js'
 import { openWorkspaceDatabase } from '../../lib/database/index.js'
-import { ExecutionStorage } from '../../lib/execution/index.js'
+import { ExecutionStorage, formatTokenCount, formatCost } from '../../lib/execution/index.js'
 import {
   getHostTmuxSessionNames,
   getContainerTmuxSessionMap,
@@ -67,6 +67,14 @@ interface InspectResult {
   worktree: {
     path: string
     state: string
+  } | null
+  tokens: {
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
+    model: string | null
+    estimatedCostUsd: number
   } | null
 }
 
@@ -365,6 +373,14 @@ export default class SessionInspect extends PromptCommand {
           path: worktreePath,
           state: alive ? 'active' : 'idle',
         },
+        tokens: match.inputTokens ? {
+          inputTokens: match.inputTokens,
+          outputTokens: match.outputTokens || 0,
+          cacheReadTokens: match.cacheReadTokens || 0,
+          cacheCreationTokens: match.cacheCreationTokens || 0,
+          model: match.model || null,
+          estimatedCostUsd: match.estimatedCostUsd || 0,
+        } : null,
       }
 
       if (jsonMode) {
@@ -413,6 +429,20 @@ export default class SessionInspect extends PromptCommand {
       this.log(`    Alive:        ${alive ? styles.success('yes') : styles.error('no')}`)
       if (match.pid) {
         this.log(`    PID:          ${match.pid}`)
+      }
+
+      // Token usage
+      if (result.tokens) {
+        this.log('')
+        this.log(styles.info('  Token Usage'))
+        this.log(`    Input:        ${formatTokenCount(result.tokens.inputTokens)}`)
+        this.log(`    Output:       ${formatTokenCount(result.tokens.outputTokens)}`)
+        this.log(`    Cache read:   ${formatTokenCount(result.tokens.cacheReadTokens)}`)
+        this.log(`    Cache create: ${formatTokenCount(result.tokens.cacheCreationTokens)}`)
+        if (result.tokens.model) {
+          this.log(`    Model:        ${result.tokens.model}`)
+        }
+        this.log(`    Est. cost:    ${formatCost(result.tokens.estimatedCostUsd)}`)
       }
 
       // Last output
