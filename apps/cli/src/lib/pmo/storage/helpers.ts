@@ -170,6 +170,14 @@ export async function rowToTicket(
     labels = []
   }
 
+  // Parse repos from JSON
+  let repos: string[] | undefined
+  try {
+    repos = row.repos ? JSON.parse(row.repos) : undefined
+  } catch {
+    repos = undefined
+  }
+
   return {
     id: row.id,
     projectId: row.project_id,
@@ -185,6 +193,7 @@ export async function rowToTicket(
     owner: row.owner || undefined,
     assignee: row.assignee || undefined,
     branch: row.branch || undefined,
+    repos,
     specId: row.spec_id || undefined,
     epicId: row.epic_id || undefined,
     subtasks: subtaskRows.map((st) => ({

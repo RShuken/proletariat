@@ -333,6 +333,7 @@ export const pmoTickets = sqliteTable('pmo_tickets', {
   position: integer('position').notNull().default(0),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`),
+  repos: text('repos'),
   lastSyncedFromSpec: text('last_synced_from_spec'),
   lastSyncedFromBoard: text('last_synced_from_board'),
 }, (table) => ({

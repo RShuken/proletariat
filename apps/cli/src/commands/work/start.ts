@@ -1128,6 +1128,13 @@ export default class WorkStart extends PMOCommand {
         }
       }
 
+      // Smart repo mounting: use --repo flag override, fall back to ticket.repos
+      const reposToMount: string[] | undefined = (flags as { repo?: string[] }).repo?.length
+        ? (flags as { repo?: string[] }).repo
+        : ticket.repos && ticket.repos.length > 0
+          ? ticket.repos
+          : undefined
+
       // Agent selection: ephemeral flag, agent flag, ticket assignee, or prompt
       let agentName: string | undefined
       let agentWorktreePath: string | undefined
@@ -1153,6 +1160,7 @@ export default class WorkStart extends PMOCommand {
             if (!jsonMode) this.log(msg)
           },
           mountMode: flags.clone ? 'clone' : 'worktree',
+          repos: reposToMount,
         })
         agentName = ephemeralResult.name
         agentWorktreePath = ephemeralResult.worktreePath
@@ -1282,6 +1290,7 @@ export default class WorkStart extends PMOCommand {
               skipDevcontainer: flags['run-on-host'],
               log: (msg) => { if (!jsonMode) this.log(msg) },
               mountMode: flags.clone ? 'clone' : 'worktree',
+              repos: reposToMount,
             })
             agentName = ephemeralResult.name
             agentWorktreePath = ephemeralResult.worktreePath
@@ -1297,6 +1306,7 @@ export default class WorkStart extends PMOCommand {
             skipDevcontainer: flags['run-on-host'],
             log: (msg) => { if (!jsonMode) this.log(msg) },
             mountMode: flags.clone ? 'clone' : 'worktree',
+            repos: reposToMount,
           })
           agentName = ephemeralResult.name
           agentWorktreePath = ephemeralResult.worktreePath
@@ -1432,7 +1442,8 @@ export default class WorkStart extends PMOCommand {
       const worktreePath = resolveWorktreePath(agentDir, repoWorktrees)
 
       if (repoWorktrees.length > 1) {
-        this.log(styles.muted(`   Repos: ${repoWorktrees.join(', ')}`))
+        const smartLabel = reposToMount ? ' (smart mount)' : ''
+        this.log(styles.muted(`   Repos: ${repoWorktrees.join(', ')}${smartLabel}`))
       } else if (repoWorktrees.length === 0) {
         this.log(styles.muted(`   No git worktree found for agent, using current directory`))
       }

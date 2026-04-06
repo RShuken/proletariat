@@ -100,6 +100,7 @@ export default class TicketShow extends PMOCommand {
           subtasks: ticket.subtasks,
           labels: ticket.labels,
           metadata: ticket.metadata,
+          repos: ticket.repos,
           blockedBy: ticket.blockedBy,
           acceptanceCriteria: ticket.acceptanceCriteria,
           specId: ticket.specId,
@@ -119,6 +120,10 @@ export default class TicketShow extends PMOCommand {
     this.log(`${styles.header('Category:')}    ${ticket.category || 'none'}`);
     this.log(`${styles.header('Created:')}     ${ticket.createdAt ? new Date(ticket.createdAt).toLocaleString() : 'unknown'}`);
     this.log(`${styles.header('Updated:')}     ${ticket.updatedAt ? new Date(ticket.updatedAt).toLocaleString() : 'unknown'}`);
+
+    if (ticket.repos && ticket.repos.length > 0) {
+      this.log(`${styles.header('Repos:')}       ${ticket.repos.join(', ')}`);
+    }
 
     if (ticket.description) {
       this.log(`\n${styles.header('Description:')}`);

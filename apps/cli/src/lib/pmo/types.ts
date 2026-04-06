@@ -619,6 +619,7 @@ export interface Ticket {
   owner?: string              // Human responsible for ticket
   assignee?: string           // Who's executing (human or agent)
   branch?: string             // Git branch for this ticket's work (reused across actions)
+  repos?: string[]            // Repos this ticket needs (smart mounting — only these worktrees are created)
 
   // Relationships
   specId?: string     // Which spec defined this ticket
@@ -675,6 +676,7 @@ export interface CreateTicketInput {
   specId?: string
   epicId?: string
   labels?: string[]
+  repos?: string[]
   subtasks?: Subtask[]
   metadata?: Record<string, string>
   lastSyncedFromSpec?: Date

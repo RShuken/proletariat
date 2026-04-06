@@ -208,6 +208,7 @@ export class TicketStorage {
         specId,
         epicId: ticket.epicId || null,
         labels: JSON.stringify(labels),
+        repos: ticket.repos && ticket.repos.length > 0 ? JSON.stringify(ticket.repos) : null,
         position,
         createdAt: String(now),
         updatedAt: String(now),
@@ -315,6 +316,7 @@ export class TicketStorage {
         spec_id: pmoTickets.specId,
         epic_id: pmoTickets.epicId,
         labels: pmoTickets.labels,
+        repos: pmoTickets.repos,
         position: pmoTickets.position,
         created_at: pmoTickets.createdAt,
         updated_at: pmoTickets.updatedAt,
@@ -369,6 +371,9 @@ export class TicketStorage {
       updates.lastSyncedFromBoard = changes.lastSyncedFromBoard as unknown as string
     }
     if (changes.labels !== undefined) updates.labels = JSON.stringify(changes.labels)
+    if (changes.repos !== undefined) {
+      updates.repos = changes.repos && changes.repos.length > 0 ? JSON.stringify(changes.repos) : null
+    }
 
     if (Object.keys(updates).length > 0) {
       updates.updatedAt = String(Date.now())
@@ -741,6 +746,7 @@ export class TicketStorage {
         spec_id: pmoTickets.specId,
         epic_id: pmoTickets.epicId,
         labels: pmoTickets.labels,
+        repos: pmoTickets.repos,
         position: pmoTickets.position,
         created_at: pmoTickets.createdAt,
         updated_at: pmoTickets.updatedAt,

@@ -173,6 +173,7 @@ export const PMO_TABLE_SCHEMAS = {
       spec_id TEXT,
       epic_id TEXT,
       labels TEXT NOT NULL DEFAULT '[]',
+      repos TEXT,
       position INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

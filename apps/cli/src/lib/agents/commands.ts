@@ -557,6 +557,8 @@ export interface EphemeralAgentOptions {
   log?: (message: string) => void;
   /** Mount mode: 'worktree' = git worktree (default), 'clone' = independent clone */
   mountMode?: DBMountMode;
+  /** Only mount these repos (smart mounting). If empty/undefined, mount all repos. */
+  repos?: string[];
 }
 
 export interface EphemeralAgentResult {
@@ -658,8 +660,12 @@ export async function createEphemeralAgent(
     }
 
     // Create worktrees/clones for each repository
-    if (fs.existsSync(reposPath) && workspaceInfo.repositories.length > 0) {
-      for (const repo of workspaceInfo.repositories) {
+    // Smart mounting: if options.repos is set, only mount those repos
+    const reposToMount = options?.repos && options.repos.length > 0
+      ? workspaceInfo.repositories.filter(r => options.repos!.includes(r.name))
+      : workspaceInfo.repositories;
+    if (fs.existsSync(reposPath) && reposToMount.length > 0) {
+      for (const repo of reposToMount) {
         const sourceRepoPath = path.join(reposPath, repo.name);
         const targetPath = path.join(agentDir, repo.name);
 
@@ -708,7 +714,7 @@ export async function createEphemeralAgent(
         createDevcontainerConfig({
           agentName,
           agentDir,
-          repoWorktrees: mountMode === 'worktree' ? workspaceInfo.repositories.map(r => r.name) : undefined,
+          repoWorktrees: mountMode === 'worktree' ? reposToMount.map(r => r.name) : undefined,
           mountMode,
           gitUserName: gitIdentity.name || undefined,
           gitUserEmail: gitIdentity.email || undefined,
