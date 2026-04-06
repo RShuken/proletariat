@@ -27,6 +27,7 @@ export interface RepoInfo {
   path: string;
   fullPath: string;
   sourceUrl?: string;
+  action?: 'clone' | 'move' | 'link';
   branch?: string;
   status: 'clean' | 'dirty' | 'missing';
   commitsAhead: number;
@@ -488,7 +489,7 @@ export function getWorkspaceRepoInfo(): WorkspaceRepoInfo {
   const dbRepos = getWorkspaceRepositories(hqPath);
 
   const repositories: RepoInfo[] = dbRepos.map(repo => {
-    const fullPath = path.join(hqPath, repo.path);
+    const fullPath = path.isAbsolute(repo.path) ? repo.path : path.join(hqPath, repo.path);
     return getRepoStatus(repo.name, fullPath, repo);
   });
 
@@ -504,6 +505,7 @@ export function getRepoStatus(name: string, fullPath: string, dbRepo?: Repositor
     path: dbRepo?.path || `repos/${name}`,
     fullPath,
     sourceUrl: dbRepo?.source_url,
+    action: dbRepo?.action,
     status: 'missing',
     commitsAhead: 0,
     commitsBehind: 0,
@@ -656,6 +658,75 @@ export async function addRepository(
 }
 
 /**
+ * Link an existing local git repository to the HQ without cloning or moving.
+ * The repo stays at its current path; we just register it in the database.
+ */
+export async function linkRepository(
+  hqPath: string,
+  repoPath: string,
+): Promise<{ success: boolean; name: string; error?: string }> {
+  const resolvedPath = path.resolve(repoPath);
+  const repoName = path.basename(resolvedPath);
+
+  // Validate: path must exist
+  if (!fs.existsSync(resolvedPath)) {
+    return { success: false, name: repoName, error: `Path does not exist: ${resolvedPath}` };
+  }
+
+  // Validate: must be a git repo
+  if (!isInGitRepo(resolvedPath)) {
+    return { success: false, name: repoName, error: `Not a git repository: ${resolvedPath}` };
+  }
+
+  // Validate: must have a GitHub remote (not a purely local repo)
+  const remoteUrl = findRemoteUrl(resolvedPath);
+  if (!remoteUrl || !remoteUrl.includes('github.com')) {
+    return {
+      success: false,
+      name: repoName,
+      error: 'Repository must have a GitHub remote configured. Add one with: git remote set-url origin <github-url>',
+    };
+  }
+
+  try {
+    // Store the absolute path and the resolved remote URL
+    const dbRepoData = [{
+      name: repoName,
+      path: resolvedPath,
+      source_url: remoteUrl,
+      action: 'link' as const,
+    }];
+    addRepositoriesToDatabase(hqPath, dbRepoData);
+
+    // Create worktrees for existing agents
+    await createWorktreesForRepo(hqPath, repoName, resolvedPath);
+
+    // Create devcontainer config
+    console.log(styles.muted(`Creating devcontainer config for ${repoName}...`));
+    const gitIdentity = getGitIdentity();
+    const claudeCodeVersion = getClaudeCodeVersion(hqPath);
+    createDevcontainerConfig({
+      agentName: repoName,
+      agentDir: resolvedPath,
+      repoWorktrees: [],
+      gitUserName: gitIdentity.name || undefined,
+      gitUserEmail: gitIdentity.email || undefined,
+      claudeCodeVersion,
+    });
+
+    excludeDevcontainerFromGit(resolvedPath);
+
+    return { success: true, name: repoName };
+  } catch (error) {
+    return {
+      success: false,
+      name: repoName,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/**
  * Remove a repository from the HQ
  */
 export async function removeRepository(
@@ -663,14 +734,21 @@ export async function removeRepository(
   repoName: string,
   keepFiles: boolean = false
 ): Promise<{ success: boolean; error?: string }> {
-  const repoPath = path.join(hqPath, 'repos', repoName);
-
   try {
+    // Look up the repo in the database to determine its path and action
+    const dbRepos = getWorkspaceRepositories(hqPath);
+    const dbRepo = dbRepos.find(r => r.name === repoName);
+    const isLinked = dbRepo?.action === 'link';
+    const repoPath = dbRepo && path.isAbsolute(dbRepo.path)
+      ? dbRepo.path
+      : path.join(hqPath, 'repos', repoName);
+
     // Remove agent worktrees first
     await removeWorktreesForRepo(hqPath, repoName);
 
-    // Remove from file system (unless keepFiles)
-    if (!keepFiles && fs.existsSync(repoPath)) {
+    // Never delete files for linked repos (they live outside the HQ).
+    // For cloned/moved repos, delete unless keepFiles is set.
+    if (!keepFiles && !isLinked && fs.existsSync(repoPath)) {
       fs.rmSync(repoPath, { recursive: true, force: true });
     }
 
@@ -750,7 +828,11 @@ async function removeWorktreesForRepo(hqPath: string, repoName: string): Promise
   // Get all agents with their worktree paths
   const agents = db.prepare('SELECT name, worktree_path FROM agents').all() as { name: string; worktree_path: string | null }[];
 
-  const repoPath = path.join(hqPath, 'repos', repoName);
+  // Resolve repo path: linked repos store an absolute path, cloned repos use repos/<name>
+  const dbRepo = db.prepare('SELECT path FROM repositories WHERE name = ?').get(repoName) as { path: string } | undefined;
+  const repoPath = dbRepo && path.isAbsolute(dbRepo.path)
+    ? dbRepo.path
+    : path.join(hqPath, 'repos', repoName);
 
   for (const agent of agents) {
     // Skip agents without a worktree path

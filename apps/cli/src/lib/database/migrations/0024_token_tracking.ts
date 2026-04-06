@@ -9,7 +9,7 @@ import type Database from 'better-sqlite3'
 import type { Migration } from '../migrator.js'
 
 export const tokenTracking: Migration = {
-  id: '0023',
+  id: '0024',
   name: 'token_tracking',
   up: (db: Database.Database) => {
     const tableExists = db.prepare(

@@ -97,7 +97,10 @@ export default class View extends PMOCommand {
     this.log(format.title(`📦 Repository: ${repo.name}`));
     this.log('');
 
-    this.log(`Path:        ${colors.path(repo.path)}`);
+    this.log(`Path:        ${colors.path(repo.fullPath)}`);
+    if (repo.action === 'link') {
+      this.log(`Location:    ${colors.text('linked (external)')}`);
+    }
     if (repo.sourceUrl) {
       this.log(`Source:      ${colors.text(repo.sourceUrl)}`);
     }

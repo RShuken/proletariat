@@ -7,7 +7,8 @@ import {
   findHQRoot,
   promptAddSingleRepo,
   promptForRepositories,
-  addRepository
+  addRepository,
+  linkRepository,
 } from '../../lib/repos/index.js';
 import { parseGitHubOwnerRepo, checkGitHubRepoArchived, findRemoteUrl } from '../../lib/repos/git.js';
 import { getWorkspaceRepositories } from '../../lib/database/index.js';
@@ -23,6 +24,7 @@ export default class Add extends PromptCommand {
   static examples = [
     '<%= config.bin %> <%= command.id %> /path/to/repo',
     '<%= config.bin %> <%= command.id %> git@github.com:user/repo.git',
+    '<%= config.bin %> <%= command.id %> --path /existing/repo/checkout',
     '<%= config.bin %> <%= command.id %>',
     '<%= config.bin %> <%= command.id %> --bulk',
   ];
@@ -52,6 +54,10 @@ export default class Add extends PromptCommand {
       description: 'Skip archived repository warning',
       default: false,
     }),
+    path: Flags.string({
+      char: 'p',
+      description: 'Register an existing local git repo at this path (no clone/move)',
+    }),
   };
 
   protected getPMOOptions() {
@@ -77,6 +83,20 @@ export default class Add extends PromptCommand {
     const hqPath = findHQRoot();
     if (!hqPath) {
       return handleError('NOT_IN_HQ', 'Not in an HQ directory. Run "prlt new" first.');
+    }
+
+    // --path flag: register an existing local repo without cloning
+    if (flags.path) {
+      const result = await linkRepository(hqPath, flags.path);
+      if (result.success) {
+        this.log(format.success(`Repository ${result.name} linked at ${flags.path}`));
+      } else {
+        if (jsonMode) {
+          return handleError('LINK_FAILED', result.error || 'Failed to link repository');
+        }
+        this.error(`Failed to link repository: ${result.error}`);
+      }
+      return;
     }
 
     // Bulk mode: add multiple repositories interactively

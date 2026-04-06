@@ -58,7 +58,8 @@ export default class List extends PromptCommand {
     if (flags.format === 'compact') {
       for (const repo of repositories) {
         const statusIcon = repo.status === 'clean' ? '📦' : repo.status === 'dirty' ? '📦' : '❌';
-        let line = `${statusIcon} ${repo.name} (${repo.branch || 'unknown'}, ${repo.status}`;
+        const linked = repo.action === 'link' ? ' [linked]' : '';
+        let line = `${statusIcon} ${repo.name}${linked} (${repo.branch || 'unknown'}, ${repo.status}`;
         if (repo.commitsAhead > 0) {
           line += `, ${repo.commitsAhead} ahead`;
         }
@@ -78,9 +79,10 @@ export default class List extends PromptCommand {
       visualPadEnd('Status', 10) +
       visualPadEnd('Branch', 15) +
       visualPadEnd('Commits', 12) +
+      visualPadEnd('Location', 10) +
       'Added'
     ));
-    this.log(colors.textMuted('─'.repeat(70)));
+    this.log(colors.textMuted('─'.repeat(80)));
 
     for (const repo of repositories) {
       const statusColor = repo.status === 'clean' ? colors.repoClean :
@@ -96,6 +98,7 @@ export default class List extends PromptCommand {
         commits = `${repo.commitsBehind} behind`;
       }
 
+      const location = repo.action === 'link' ? 'linked' : 'hq';
       const added = repo.addedAt ? new Date(repo.addedAt).toLocaleDateString() : '-';
 
       this.log(
@@ -103,6 +106,7 @@ export default class List extends PromptCommand {
         statusColor(visualPadEnd(repo.status, 10)) +
         colors.warning(visualPadEnd(repo.branch || '-', 15)) +
         colors.text(visualPadEnd(commits, 12)) +
+        colors.textMuted(visualPadEnd(location, 10)) +
         colors.textMuted(added)
       );
     }
