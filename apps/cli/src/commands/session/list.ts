@@ -15,6 +15,7 @@ import {
   checkContainerLiveness,
   filterSessionsByCurrentUser,
 } from '../../lib/execution/session-utils.js'
+import { detectSessionStatus, type SessionStatus } from '../../lib/execution/status-detector.js'
 import { PromptCommand } from '../../lib/prompt-command.js'
 import { machineOutputFlags } from '../../lib/pmo/index.js'
 import { shouldOutputJson } from '../../lib/prompt-json.js'
@@ -32,6 +33,7 @@ interface VerifiedSession {
   source: 'db' | 'discovered'  // Whether session was found in DB or discovered from tmux
   lastHeartbeat?: Date  // Last heartbeat timestamp from DB
   lifecycleState?: string  // Lifecycle state from DB (healthy, idle, died, completed)
+  detectedStatus?: SessionStatus  // Tmux-based status detection (TKT-031)
 }
 
 export default class SessionList extends PromptCommand {
@@ -181,6 +183,7 @@ export default class SessionList extends PromptCommand {
         // Only include active sessions by default.
         // Use --all to include stale DB records (exists=false).
         if (exists || flags.all) {
+          const detected = exists ? detectSessionStatus(actualSessionId, containerId) : undefined
           sessions.push({
             sessionId: actualSessionId,
             ticketId: exec.ticketId,
@@ -192,6 +195,7 @@ export default class SessionList extends PromptCommand {
             source: 'db',
             lastHeartbeat: exec.lastHeartbeat,
             lifecycleState: exec.lifecycleState,
+            detectedStatus: detected?.status,
           })
         }
       }
@@ -230,6 +234,7 @@ export default class SessionList extends PromptCommand {
               matchedHostSessions.add(exec.sessionId)
             }
 
+            const detected = detectSessionStatus(exec.sessionId, containerId)
             sessions.push({
               sessionId: exec.sessionId,
               ticketId: exec.ticketId,
@@ -239,6 +244,7 @@ export default class SessionList extends PromptCommand {
               containerId,
               exists: true,
               source: 'db',
+              detectedStatus: detected.status,
             })
           }
         }
@@ -283,6 +289,7 @@ export default class SessionList extends PromptCommand {
         if (!actualSessionId) continue
 
         if (exists || flags.all) {
+          const detected = exists && actualSessionId ? detectSessionStatus(actualSessionId, mExec.containerId) : undefined
           sessions.push({
             sessionId: actualSessionId,
             ticketId: mExec.ticketId || mExec.id,
@@ -292,6 +299,7 @@ export default class SessionList extends PromptCommand {
             containerId: mExec.containerId,
             exists,
             source: 'db',
+            detectedStatus: detected?.status,
           })
         }
       }
@@ -311,6 +319,7 @@ export default class SessionList extends PromptCommand {
 
           const parsed = parseSessionName(sessionName)
           if (parsed) {
+            const detected = detectSessionStatus(sessionName)
             sessions.push({
               sessionId: sessionName,
               ticketId: parsed.ticketId,
@@ -319,6 +328,7 @@ export default class SessionList extends PromptCommand {
               environment: 'host',
               exists: true,
               source: 'discovered',
+              detectedStatus: detected.status,
             })
           }
         }
@@ -329,6 +339,7 @@ export default class SessionList extends PromptCommand {
 
           const parsed = parseSessionName(sessionName)
           if (parsed) {
+            const detected = detectSessionStatus(sessionName, containerId)
             sessions.push({
               sessionId: sessionName,
               ticketId: parsed.ticketId,
@@ -338,6 +349,7 @@ export default class SessionList extends PromptCommand {
               containerId,
               exists: true,
               source: 'discovered',
+              detectedStatus: detected.status,
             })
           }
         }
@@ -351,19 +363,20 @@ export default class SessionList extends PromptCommand {
       if (sessions.length > 0) {
         this.log('')
         this.log(styles.header('Active Sessions'))
-        this.log('='.repeat(90))
+        this.log('='.repeat(105))
 
         this.log(
           styles.muted(
             '  ' +
-            visualPadEnd('Session', 34) +
+            visualPadEnd('Session', 30) +
             visualPadEnd('Ticket', 12) +
-            visualPadEnd('Agent', 18) +
-            visualPadEnd('Type', 15) +
-            'Status'
+            visualPadEnd('Agent', 16) +
+            visualPadEnd('Type', 12) +
+            visualPadEnd('Status', 12) +
+            'Activity'
           )
         )
-        this.log('  ' + '-'.repeat(88))
+        this.log('  ' + '-'.repeat(103))
 
         for (const session of sessions) {
           const typeIcon = session.environment === 'container' ? 'container' : 'host'
@@ -379,23 +392,37 @@ export default class SessionList extends PromptCommand {
             statusText = 'died'
           }
 
+          // Detected activity status from tmux pane output (TKT-031)
+          const activityIcon = session.detectedStatus === 'WORKING' ? '🟢 WORKING' :
+                              session.detectedStatus === 'NEEDS_INPUT' ? '🟡 INPUT' :
+                              session.detectedStatus === 'ERROR' ? '🔴 ERROR' :
+                              session.detectedStatus === 'COMPLETE' ? '✅ DONE' :
+                              session.detectedStatus === 'IDLE' ? '⚪ IDLE' :
+                              session.exists ? '⚪ ...' : ''
+          const activityColor = session.detectedStatus === 'WORKING' ? styles.success :
+                               session.detectedStatus === 'NEEDS_INPUT' ? styles.warning :
+                               session.detectedStatus === 'ERROR' ? styles.error :
+                               session.detectedStatus === 'COMPLETE' ? styles.info :
+                               styles.muted
+
           // Truncate long session names to fit column
-          const displaySession = session.sessionId.length > 32
-            ? session.sessionId.substring(0, 29) + '...'
+          const displaySession = session.sessionId.length > 28
+            ? session.sessionId.substring(0, 25) + '...'
             : session.sessionId
 
           this.log(
             '  ' +
-            visualPadEnd(displaySession, 34) +
+            visualPadEnd(displaySession, 30) +
             visualPadEnd(session.ticketId, 12) +
-            visualPadEnd(session.agentName, 18) +
-            visualPadEnd(typeIcon, 15) +
-            statusColor(statusText)
+            visualPadEnd(session.agentName, 16) +
+            visualPadEnd(typeIcon, 12) +
+            statusColor(visualPadEnd(statusText, 12)) +
+            activityColor(activityIcon)
           )
         }
 
         this.log('')
-        this.log('='.repeat(90))
+        this.log('='.repeat(105))
 
         // Show attach command example
         const firstSession = sessions.find(s => s.exists)

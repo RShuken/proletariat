@@ -26,6 +26,7 @@ import {
   captureTmuxPane,
   parseSessionName,
 } from '../lib/execution/session-utils.js'
+import { detectSessionStatus, type SessionStatus } from '../lib/execution/status-detector.js'
 
 // =============================================================================
 // Helpers (exported for testing)
@@ -96,6 +97,8 @@ export interface AgentSnapshot {
   gitStatus: GitStatus | null
   sessionName: string
   workdir: string
+  /** Detected activity status from tmux pane output (TKT-031) */
+  detectedStatus?: SessionStatus
 }
 
 export function buildAgentSnapshot(
@@ -113,6 +116,9 @@ export function buildAgentSnapshot(
   // Get git status for the workdir
   const gitStatus = getGitStatus(session.workdir)
 
+  // Detect session activity status from tmux pane (TKT-031)
+  const detected = detectSessionStatus(session.sessionName)
+
   return {
     agentName: session.agentName,
     ticketId: parsed?.ticketId,
@@ -126,6 +132,7 @@ export function buildAgentSnapshot(
     gitStatus,
     sessionName: session.sessionName,
     workdir: session.workdir,
+    detectedStatus: detected.status,
   }
 }
 
@@ -162,9 +169,14 @@ export function renderDashboard(snapshots: AgentSnapshot[]): string {
   for (let i = 0; i < snapshots.length; i++) {
     const snap = snapshots[i]
 
-    // Agent header line
+    // Agent header line with detected activity status (TKT-031)
     const ticketLabel = snap.ticketId ? styles.info(snap.ticketId) + ' ' : ''
-    const statusColor = snap.status === 'running' ? styles.success : styles.warning
+    const activityLabel = snap.detectedStatus === 'WORKING' ? styles.success('WORKING') :
+                          snap.detectedStatus === 'NEEDS_INPUT' ? styles.warning('NEEDS INPUT') :
+                          snap.detectedStatus === 'ERROR' ? styles.error('ERROR') :
+                          snap.detectedStatus === 'COMPLETE' ? styles.info('COMPLETE') :
+                          snap.detectedStatus === 'IDLE' ? styles.muted('IDLE') :
+                          styles.muted(snap.status)
     const gitLabel = snap.gitStatus
       ? styles.muted(' on ') + styles.emphasis(truncate(snap.gitStatus.branch, 30)) +
         (snap.gitStatus.uncommitted > 0
@@ -176,7 +188,7 @@ export function renderDashboard(snapshots: AgentSnapshot[]): string {
       '  ' + ticketLabel +
       styles.emphasis(snap.agentName) +
       styles.muted(' (' + snap.runner + ')') +
-      '  ' + statusColor(snap.status) +
+      '  ' + activityLabel +
       styles.muted('  uptime: ') + snap.uptime +
       gitLabel
     )
@@ -268,6 +280,7 @@ export default class Monitor extends PromptCommand {
               gitUncommitted: s.gitStatus?.uncommitted,
               sessionName: s.sessionName,
               workdir: s.workdir,
+              detectedStatus: s.detectedStatus,
             })),
           }, createMetadata('monitor', flags))
           return
