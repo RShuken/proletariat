@@ -1,5 +1,5 @@
 /**
- * Migration 0025 — Watchdog Settings
+ * Migration 0026 — Watchdog Settings
  *
  * Seeds default watchdog configuration into workspace_settings.
  * The agent watchdog monitors running sessions for context exhaustion,
@@ -10,7 +10,7 @@ import type Database from 'better-sqlite3'
 import type { Migration } from '../migrator.js'
 
 export const watchdogSettings: Migration = {
-  id: '0025',
+  id: '0026',
   name: 'watchdog_settings',
   up: (db: Database.Database) => {
     const tableExists = db.prepare(
