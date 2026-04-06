@@ -10,7 +10,7 @@ import type Database from 'better-sqlite3'
 import type { Migration } from '../migrator.js'
 
 export const watchdogSettings: Migration = {
-  id: '0025',
+  id: '0026',
   name: 'watchdog_settings',
   up: (db: Database.Database) => {
     const tableExists = db.prepare(

@@ -13,6 +13,8 @@ import * as path from 'node:path'
 import { createDrizzleConnection, DrizzleDB } from '../../database/drizzle.js'
 import { type DatabaseDriver, BetterSqlite3Driver } from '../../database/driver.js'
 import { isReadOnlyHQMount } from '../../container.js'
+import { runDrizzleMigrations } from '../../database/migrator.js'
+import { ALL_MIGRATIONS } from '../../database/migrations/index.js'
 import {
   AcceptanceCriterion,
   Board,
@@ -102,6 +104,13 @@ export class SQLiteStorage implements PMOStorage {
     // Open database — read-only in container environments to prevent SQLITE_READONLY crashes
     this.db = new Database(dbPath, readOnly ? { readonly: true } : undefined)
     this.db.pragma('foreign_keys = ON')
+
+    // Run pending migrations to ensure schema is up-to-date.
+    // This is needed because some commands (e.g., ticket list) reach SQLiteStorage
+    // without going through openWorkspaceDatabase() which normally runs migrations.
+    if (!readOnly) {
+      runDrizzleMigrations(this.db, ALL_MIGRATIONS)
+    }
 
     // Create DatabaseDriver abstraction
     this.driver = new BetterSqlite3Driver(this.db)
