@@ -96,6 +96,11 @@ export default class TicketCreate extends PMOCommand {
     team: Flags.string({
       description: 'Linear team key (fallback: PRLT_LINEAR_TEAM)',
     }),
+    repo: Flags.string({
+      char: 'r',
+      description: 'Repos this ticket needs (can be specified multiple times for smart repo mounting)',
+      multiple: true,
+    }),
   };
 
   async execute(): Promise<void> {
@@ -186,6 +191,11 @@ export default class TicketCreate extends PMOCommand {
       ? flags.labels.split(',').map(l => l.trim()).filter(Boolean)
       : undefined;
 
+    // Parse repos from flag
+    const reposFromFlag = flags.repo && flags.repo.length > 0
+      ? flags.repo.map(r => r.trim()).filter(Boolean)
+      : undefined;
+
     // Get ticket data (interactive or from flags)
     let ticketData: {
       title: string;
@@ -196,6 +206,7 @@ export default class TicketCreate extends PMOCommand {
       id?: string;
       epicId?: string;
       labels?: string[];
+      repos?: string[];
     };
 
     // Use FlagResolver to handle both JSON mode and interactive prompts
@@ -258,6 +269,7 @@ export default class TicketCreate extends PMOCommand {
         id: resolvedFlags.id,
         epicId: resolvedFlags.epic,
         labels: labelsFromFlag || template?.defaultLabels,
+        repos: reposFromFlag,
       };
     } else {
       // Full interactive mode - use the detailed prompts
@@ -314,6 +326,9 @@ export default class TicketCreate extends PMOCommand {
       if (ticketData.labels && ticketData.labels.length > 0) {
         this.log(styles.muted(`   Labels: ${ticketData.labels.join(', ')}`));
       }
+      if (ticketData.repos && ticketData.repos.length > 0) {
+        this.log(styles.muted(`   Repos: ${ticketData.repos.join(', ')}`));
+      }
       if (template) {
         this.log(styles.muted(`   Template: ${template.name}`));
         if (template.suggestedSubtasks.length > 0) {
@@ -335,6 +350,7 @@ export default class TicketCreate extends PMOCommand {
       description: ticketData.description,
       epicId: ticketData.epicId,
       labels: ticketData.labels,
+      repos: ticketData.repos,
     });
 
     if (!createResult.success || !createResult.ticket) {

@@ -69,6 +69,18 @@ export default class TicketEdit extends PMOCommand {
       description: 'Remove a label',
       multiple: true,
     }),
+    'add-repo': Flags.string({
+      description: 'Add a repo (can be used multiple times)',
+      multiple: true,
+    }),
+    'remove-repo': Flags.string({
+      description: 'Remove a repo (can be used multiple times)',
+      multiple: true,
+    }),
+    'clear-repos': Flags.boolean({
+      description: 'Clear all repos (mount all repos on work start)',
+      default: false,
+    }),
     'add-ac': Flags.string({
       description: 'Add an acceptance criterion (can be used multiple times)',
       multiple: true,
@@ -151,7 +163,8 @@ export default class TicketEdit extends PMOCommand {
 
     const hasFlags = flags.title || flags.description || flags.priority || flags.category ||
       flags.owner || flags.assignee || flags['add-subtask'] || flags['clear-subtasks'] ||
-      flags['add-label'] || flags['remove-label'] || flags['add-ac'] || flags['clear-ac'];
+      flags['add-label'] || flags['remove-label'] || flags['add-ac'] || flags['clear-ac'] ||
+      flags['add-repo'] || flags['remove-repo'] || flags['clear-repos'];
 
     if (flags.interactive || !hasFlags) {
       // In JSON mode without flags, output a form prompt instead of interactive prompts
@@ -232,6 +245,29 @@ export default class TicketEdit extends PMOCommand {
       }
     }
 
+    // Handle repos
+    let reposChanged = false;
+    let currentRepos = [...(ticket.repos || [])];
+
+    if (flags['clear-repos']) {
+      currentRepos = [];
+      reposChanged = true;
+    }
+
+    if (flags['remove-repo'] && flags['remove-repo'].length > 0) {
+      currentRepos = currentRepos.filter(r => !flags['remove-repo']!.includes(r));
+      reposChanged = true;
+    }
+
+    if (flags['add-repo'] && flags['add-repo'].length > 0) {
+      for (const repo of flags['add-repo']) {
+        if (!currentRepos.includes(repo)) {
+          currentRepos.push(repo);
+          reposChanged = true;
+        }
+      }
+    }
+
     // Handle acceptance criteria
     let acChanged = false;
     if (flags['clear-ac']) {
@@ -249,7 +285,7 @@ export default class TicketEdit extends PMOCommand {
     }
 
     // Check if anything changed
-    const hasChanges = Object.keys(updates).length > 0 || subtasksChanged || labelsChanged || acChanged;
+    const hasChanges = Object.keys(updates).length > 0 || subtasksChanged || labelsChanged || reposChanged || acChanged;
     if (!hasChanges) {
       this.log(styles.muted('\nNo changes made.'));
       return;
@@ -258,6 +294,11 @@ export default class TicketEdit extends PMOCommand {
     // Update the ticket with labels if changed
     if (labelsChanged) {
       (updates as { labels?: string[] }).labels = currentLabels;
+    }
+
+    // Update the ticket with repos if changed
+    if (reposChanged) {
+      (updates as { repos?: string[] }).repos = currentRepos;
     }
 
     // Update the ticket through provider
@@ -320,6 +361,7 @@ export default class TicketEdit extends PMOCommand {
       }
     }
     if (labelsChanged) changedFields.push(`Labels: ${currentLabels.join(', ') || 'none'}`);
+    if (reposChanged) changedFields.push(`Repos: ${currentRepos.join(', ') || 'all (default)'}`);
 
     for (const field of changedFields) {
       this.log(styles.muted(`   ${field}`));
