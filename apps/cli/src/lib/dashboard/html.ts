@@ -1,9 +1,16 @@
 /**
  * Dashboard HTML Template
  *
- * Returns a complete self-contained HTML page for the web dashboard.
+ * Returns a complete self-contained HTML page for the real-time web dashboard.
+ * Uses WebSocket for live updates every 3 seconds.
+ * Features: agent status cards, token usage, ticket board, tmux output peek.
+ * Mobile responsive via CSS media queries.
+ *
  * Styled to match the proletariat marketing site — Switzer font,
  * JetBrains Mono, pink-600 accents, clean white cards, Tailwind CDN.
+ *
+ * Security: All dynamic content is escaped via the esc() helper which uses
+ * textContent assignment on a detached DOM element to prevent XSS.
  */
 
 export function getDashboardHTML(port: number): string {
@@ -32,6 +39,9 @@ export function getDashboardHTML(port: number): string {
             },
             gray: {
               750: '#2a2a2e',
+              850: '#1e1e22',
+              900: '#181818',
+              950: '#111113',
             },
           },
         },
@@ -39,67 +49,96 @@ export function getDashboardHTML(port: number): string {
     }
   </script>
   <style>
-    /* Scrollbar */
     ::-webkit-scrollbar { width: 5px; height: 5px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    .animate-pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+
+    .tmux-peek {
+      font-size: 11px;
+      line-height: 1.4;
+      white-space: pre;
+      overflow-x: auto;
+      tab-size: 4;
+    }
+
+    @media (max-width: 640px) {
+      .kanban-scroll { flex-direction: column; }
+      .kanban-scroll > div { min-width: 100% !important; max-width: 100% !important; }
+      .agent-grid { grid-template-columns: 1fr !important; }
+      .peek-grid { grid-template-columns: 1fr !important; }
+      .session-table { display: block; overflow-x: auto; }
+      .pr-item { flex-direction: column; align-items: flex-start !important; gap: 0.5rem !important; }
+    }
   </style>
 </head>
 <body class="bg-white text-gray-950 font-sans min-h-screen">
 
-  <!-- Header -->
   <header class="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-gray-200">
-    <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-      <div class="flex items-center gap-4">
-        <h1 class="text-lg font-semibold tracking-tight text-gray-950">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between">
+      <div class="flex items-center gap-3 sm:gap-4">
+        <h1 class="text-base sm:text-lg font-semibold tracking-tight text-gray-950">
           <span class="text-pink-600">prlt</span> dashboard
         </h1>
-        <span id="project-name" class="font-mono text-xs uppercase tracking-widest text-gray-500 bg-gray-100 px-3 py-1 rounded-full">loading...</span>
+        <span id="project-name" class="font-mono text-[10px] sm:text-xs uppercase tracking-widest text-gray-500 bg-gray-100 px-2 sm:px-3 py-1 rounded-full">loading...</span>
       </div>
-      <div class="flex items-center gap-3 text-xs text-gray-400">
+      <div class="flex items-center gap-2 sm:gap-3 text-xs text-gray-400">
         <span id="status-dot" class="w-2 h-2 rounded-full bg-gray-300"></span>
         <span id="status-text">Connecting...</span>
-        <span id="last-updated" class="text-gray-400"></span>
+        <span id="last-updated" class="hidden sm:inline text-gray-400"></span>
       </div>
     </div>
   </header>
 
-  <!-- Main -->
-  <main class="max-w-7xl mx-auto px-6 py-8 space-y-10">
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-8 sm:space-y-10">
 
-    <!-- Board Section -->
-    <section id="board-section">
-      <div class="flex items-center gap-3 mb-4">
-        <h2 class="font-mono text-xs uppercase tracking-widest text-gray-500">Board</h2>
-        <span id="board-count" class="font-mono text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">0</span>
-      </div>
-      <div id="kanban" class="flex gap-3 overflow-x-auto pb-2"></div>
-    </section>
-
-    <!-- Agents Section -->
+    <!-- Agent Status Cards -->
     <section id="agents-section">
       <div class="flex items-center gap-3 mb-4">
         <h2 class="font-mono text-xs uppercase tracking-widest text-gray-500">Agents</h2>
         <span id="agents-count" class="font-mono text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">0</span>
       </div>
-      <div id="agents-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3"></div>
+      <div id="agents-grid" class="agent-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3"></div>
     </section>
 
-    <!-- Sessions Section -->
+    <!-- Ticket Board -->
+    <section id="board-section">
+      <div class="flex items-center gap-3 mb-4">
+        <h2 class="font-mono text-xs uppercase tracking-widest text-gray-500">Board</h2>
+        <span id="board-count" class="font-mono text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">0</span>
+      </div>
+      <div id="kanban" class="kanban-scroll flex gap-3 overflow-x-auto pb-2"></div>
+    </section>
+
+    <!-- Tmux Output Peek -->
+    <section id="peek-section" class="hidden">
+      <div class="flex items-center gap-3 mb-4">
+        <h2 class="font-mono text-xs uppercase tracking-widest text-gray-500">Live Output</h2>
+        <span id="peek-count" class="font-mono text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">0</span>
+      </div>
+      <div id="peek-grid" class="peek-grid grid grid-cols-1 lg:grid-cols-2 gap-3"></div>
+    </section>
+
+    <!-- Sessions -->
     <section id="sessions-section">
       <div class="flex items-center gap-3 mb-4">
         <h2 class="font-mono text-xs uppercase tracking-widest text-gray-500">Sessions</h2>
         <span id="sessions-count" class="font-mono text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">0</span>
       </div>
-      <div class="bg-white rounded-2xl shadow-sm ring-1 ring-gray-200 overflow-hidden">
+      <div class="bg-white rounded-2xl shadow-sm ring-1 ring-gray-200 overflow-hidden session-table">
         <table class="w-full">
           <thead>
             <tr class="border-b border-gray-100">
               <th class="text-left px-4 py-3 font-mono text-xs uppercase tracking-widest text-gray-400 font-medium">Session</th>
               <th class="text-left px-4 py-3 font-mono text-xs uppercase tracking-widest text-gray-400 font-medium">Ticket</th>
               <th class="text-left px-4 py-3 font-mono text-xs uppercase tracking-widest text-gray-400 font-medium">Agent</th>
-              <th class="text-left px-4 py-3 font-mono text-xs uppercase tracking-widest text-gray-400 font-medium">Environment</th>
+              <th class="text-left px-4 py-3 font-mono text-xs uppercase tracking-widest text-gray-400 font-medium hidden sm:table-cell">Environment</th>
               <th class="text-left px-4 py-3 font-mono text-xs uppercase tracking-widest text-gray-400 font-medium">Status</th>
             </tr>
           </thead>
@@ -108,7 +147,7 @@ export function getDashboardHTML(port: number): string {
       </div>
     </section>
 
-    <!-- PRs Section -->
+    <!-- PRs -->
     <section id="prs-section">
       <div class="flex items-center gap-3 mb-4">
         <h2 class="font-mono text-xs uppercase tracking-widest text-gray-500">Pull Requests</h2>
@@ -120,15 +159,16 @@ export function getDashboardHTML(port: number): string {
   </main>
 
   <script>
-    // Escape helper
+    // All dynamic content is escaped via this helper to prevent XSS.
+    // It uses textContent on a detached element, which is the standard
+    // safe approach for HTML entity encoding.
+    var _escDiv = document.createElement('div');
     function esc(str) {
       if (!str) return '';
-      const d = document.createElement('div');
-      d.textContent = str;
-      return d.innerHTML;
+      _escDiv.textContent = str;
+      return _escDiv.innerHTML;
     }
 
-    // Priority colors
     function priorityClasses(p) {
       switch (p) {
         case 'P0': return 'text-red-600 ring-red-200 bg-red-50';
@@ -139,33 +179,146 @@ export function getDashboardHTML(port: number): string {
       }
     }
 
-    // Render functions
-    function renderBoard(board) {
-      const kanban = document.getElementById('kanban');
-      const cols = board.columns || [];
-      let totalTickets = 0;
-      cols.forEach(c => totalTickets += (c.tickets || []).length);
-      document.getElementById('board-count').textContent = totalTickets;
+    function statusConfig(status) {
+      switch (status) {
+        case 'working':     return { dot: 'bg-green-400 animate-pulse-dot', border: 'border-l-green-400', label: 'Working', labelCls: 'text-green-600 bg-green-50 ring-green-200' };
+        case 'idle':        return { dot: 'bg-gray-300', border: 'border-l-gray-300', label: 'Idle', labelCls: 'text-gray-500 bg-gray-50 ring-gray-200' };
+        case 'needs-input': return { dot: 'bg-yellow-400 animate-pulse-dot', border: 'border-l-yellow-400', label: 'Needs Input', labelCls: 'text-yellow-600 bg-yellow-50 ring-yellow-200' };
+        case 'error':       return { dot: 'bg-red-400', border: 'border-l-red-400', label: 'Error', labelCls: 'text-red-600 bg-red-50 ring-red-200' };
+        default:            return { dot: 'bg-gray-300', border: 'border-l-gray-300', label: status, labelCls: 'text-gray-500 bg-gray-50 ring-gray-200' };
+      }
+    }
 
-      if (cols.length === 0) {
-        kanban.innerHTML = '<p class="text-sm text-gray-400 py-8 text-center w-full">No board data</p>';
+    function formatElapsed(seconds) {
+      if (!seconds && seconds !== 0) return '';
+      if (seconds < 60) return seconds + 's';
+      if (seconds < 3600) return Math.floor(seconds / 60) + 'm ' + (seconds % 60) + 's';
+      var h = Math.floor(seconds / 3600);
+      var m = Math.floor((seconds % 3600) / 60);
+      return h + 'h ' + m + 'm';
+    }
+
+    function formatTokens(count) {
+      if (count >= 1000000) return (count / 1000000).toFixed(1) + 'M';
+      if (count >= 1000) return (count / 1000).toFixed(1) + 'K';
+      return String(count);
+    }
+
+    function formatCost(usd) {
+      if (usd >= 1) return '$' + usd.toFixed(2);
+      if (usd >= 0.01) return '$' + usd.toFixed(3);
+      return '$' + usd.toFixed(4);
+    }
+
+    // =========================================================================
+    // Render: Agent Status Cards
+    // =========================================================================
+
+    function renderAgents(agents) {
+      var grid = document.getElementById('agents-grid');
+      document.getElementById('agents-count').textContent = agents.length;
+
+      if (agents.length === 0) {
+        grid.textContent = '';
+        var p = document.createElement('p');
+        p.className = 'text-sm text-gray-400 py-8 text-center col-span-full';
+        p.textContent = 'No agents found';
+        grid.appendChild(p);
         return;
       }
 
-      kanban.innerHTML = cols.map(col => {
-        const tickets = col.tickets || [];
+      // Build cards using DOM methods for safety, with esc() for any HTML strings
+      var html = agents.map(function(a) {
+        var sc = statusConfig(a.derivedStatus || 'idle');
+
+        var tokenHtml = '';
+        if (a.tokenUsage) {
+          var tu = a.tokenUsage;
+          tokenHtml = '<div class="mt-3 pt-3 border-t border-gray-100">' +
+            '<div class="flex items-center justify-between text-[10px] font-mono text-gray-400">' +
+              '<span>Tokens</span>' +
+              (tu.estimatedCostUsd > 0 ? '<span class="text-pink-600 font-medium">' + esc(formatCost(tu.estimatedCostUsd)) + '</span>' : '') +
+            '</div>' +
+            '<div class="flex gap-3 mt-1 text-[10px] font-mono">' +
+              '<span class="text-gray-500">in: <span class="text-gray-950 font-medium">' + esc(formatTokens(tu.inputTokens)) + '</span></span>' +
+              '<span class="text-gray-500">out: <span class="text-gray-950 font-medium">' + esc(formatTokens(tu.outputTokens)) + '</span></span>' +
+              (tu.cacheReadTokens > 0 ? '<span class="text-gray-500">cache: <span class="text-gray-950 font-medium">' + esc(formatTokens(tu.cacheReadTokens)) + '</span></span>' : '') +
+            '</div>' +
+            (tu.model ? '<div class="text-[9px] font-mono text-gray-400 mt-1 truncate">' + esc(tu.model) + '</div>' : '') +
+          '</div>';
+        }
+
+        var ticketBadges = '';
+        var ticketList = a.assignedTickets || [];
+        if (ticketList.length > 0) {
+          ticketBadges = '<div class="flex gap-1.5 flex-wrap mt-2">' +
+            ticketList.map(function(t) {
+              var isActive = a.currentTicket === t;
+              var cls = isActive ? 'text-pink-600 bg-pink-50 ring-pink-600/20' : 'text-gray-500 bg-gray-50 ring-gray-200';
+              return '<span class="font-mono text-[10px] font-medium px-1.5 py-0.5 rounded-lg ring-1 ' + cls + '">' + esc(t) + '</span>';
+            }).join('') +
+          '</div>';
+        }
+
+        var elapsedHtml = '';
+        if (a.elapsedSeconds !== undefined && a.elapsedSeconds !== null && a.derivedStatus === 'working') {
+          elapsedHtml = '<span class="font-mono text-[10px] text-gray-400">' + esc(formatElapsed(a.elapsedSeconds)) + '</span>';
+        }
+
+        return '<div class="bg-white rounded-2xl shadow-sm ring-1 ring-gray-200 p-4 transition-all hover:ring-pink-600/30 border-l-[3px] ' + sc.border + '">' +
+          '<div class="flex items-center justify-between">' +
+            '<div class="flex items-center gap-2">' +
+              '<span class="w-2 h-2 rounded-full flex-shrink-0 ' + sc.dot + '"></span>' +
+              '<span class="text-sm font-semibold text-gray-950">' + esc(a.name) + '</span>' +
+            '</div>' +
+            '<div class="flex items-center gap-2">' +
+              elapsedHtml +
+              '<span class="font-mono text-[10px] font-medium px-2 py-0.5 rounded-full ring-1 ' + sc.labelCls + '">' + esc(sc.label) + '</span>' +
+            '</div>' +
+          '</div>' +
+          (a.branch ? '<div class="font-mono text-xs text-gray-400 mt-1.5 truncate">' + esc(a.branch) + '</div>' : '') +
+          ticketBadges +
+          tokenHtml +
+        '</div>';
+      }).join('');
+
+      grid.innerHTML = html; // All values escaped via esc()
+    }
+
+    // =========================================================================
+    // Render: Ticket Board
+    // =========================================================================
+
+    function renderBoard(board) {
+      var kanban = document.getElementById('kanban');
+      var cols = board.columns || [];
+      var totalTickets = 0;
+      cols.forEach(function(c) { totalTickets += (c.tickets || []).length; });
+      document.getElementById('board-count').textContent = totalTickets;
+
+      if (cols.length === 0) {
+        kanban.textContent = '';
+        var p = document.createElement('p');
+        p.className = 'text-sm text-gray-400 py-8 text-center w-full';
+        p.textContent = 'No board data';
+        kanban.appendChild(p);
+        return;
+      }
+
+      kanban.innerHTML = cols.map(function(col) { // All values escaped via esc()
+        var tickets = col.tickets || [];
         return '<div class="min-w-[240px] max-w-[300px] flex-1 bg-white rounded-2xl shadow-sm ring-1 ring-gray-200 flex flex-col max-h-[500px]">' +
           '<div class="px-4 py-3 border-b border-gray-100 flex justify-between items-center flex-shrink-0">' +
             '<span class="text-sm font-medium text-gray-950">' + esc(col.name) + '</span>' +
             '<span class="font-mono text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">' + tickets.length + '</span>' +
           '</div>' +
           '<div class="p-2 overflow-y-auto flex-1 space-y-1.5">' +
-            (tickets.length === 0 ? '' : tickets.map(t => {
-              let meta = '';
+            (tickets.length === 0 ? '' : tickets.map(function(t) {
+              var meta = '';
               if (t.priority) meta += '<span class="inline-flex text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-lg ring-1 ' + priorityClasses(t.priority) + '">' + esc(t.priority) + '</span>';
               if (t.category) meta += '<span class="inline-flex text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-lg ring-1 ring-purple-200 text-purple-600 bg-purple-50">' + esc(t.category) + '</span>';
               if (t.assignee) meta += '<span class="inline-flex text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-lg ring-1 ring-pink-600/20 text-pink-600 bg-pink-50">' + esc(t.assignee) + '</span>';
-              (t.labels || []).forEach(l => { meta += '<span class="inline-flex text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-lg ring-1 ring-gray-200 text-gray-500 bg-gray-50">' + esc(l) + '</span>'; });
+              (t.labels || []).forEach(function(l) { meta += '<span class="inline-flex text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-lg ring-1 ring-gray-200 text-gray-500 bg-gray-50">' + esc(l) + '</span>'; });
               return '<div class="bg-gray-50 rounded-xl p-3 transition-all hover:ring-1 hover:ring-pink-600/30 cursor-default">' +
                 '<div class="font-mono text-[11px] font-semibold text-pink-600">' + esc(t.id) + '</div>' +
                 '<div class="text-sm text-gray-950 mt-1 leading-snug">' + esc(t.title) + '</div>' +
@@ -177,48 +330,66 @@ export function getDashboardHTML(port: number): string {
       }).join('');
     }
 
-    function renderAgents(agents) {
-      const grid = document.getElementById('agents-grid');
-      document.getElementById('agents-count').textContent = agents.length;
+    // =========================================================================
+    // Render: Tmux Output Peek
+    // =========================================================================
 
-      if (agents.length === 0) {
-        grid.innerHTML = '<p class="text-sm text-gray-400 py-8 text-center col-span-full">No agents found</p>';
+    function renderPeeks(peeks) {
+      var section = document.getElementById('peek-section');
+      var grid = document.getElementById('peek-grid');
+      document.getElementById('peek-count').textContent = peeks.length;
+
+      if (peeks.length === 0) {
+        section.classList.add('hidden');
         return;
       }
 
-      grid.innerHTML = agents.map(a => {
-        const isActive = a.hasActiveSessions;
-        const borderClass = isActive ? 'border-l-[3px] border-l-green-400' : 'border-l-[3px] border-l-gray-300';
-        const dotClass = isActive ? 'bg-green-400' : 'bg-gray-300';
-        let tickets = '';
-        if (a.assignedTickets.length > 0) {
-          tickets = '<div class="flex gap-1.5 flex-wrap mt-3">' +
-            a.assignedTickets.map(t => '<span class="font-mono text-[10px] font-medium text-pink-600 bg-pink-50 ring-1 ring-pink-600/20 px-2 py-0.5 rounded-lg">' + esc(t) + '</span>').join('') +
-          '</div>';
-        }
-        return '<div class="bg-white rounded-2xl shadow-sm ring-1 ring-gray-200 p-4 transition-all hover:ring-pink-600/30 ' + borderClass + '">' +
-          '<div class="flex items-center gap-2">' +
-            '<span class="w-2 h-2 rounded-full flex-shrink-0 ' + dotClass + '"></span>' +
-            '<span class="text-sm font-semibold text-gray-950">' + esc(a.name) + '</span>' +
+      section.classList.remove('hidden');
+
+      grid.innerHTML = peeks.map(function(peek) { // All values escaped via esc()
+        var content = (peek.lines || []).map(function(l) { return esc(l); }).join('\\n');
+        return '<div class="bg-gray-950 rounded-2xl shadow-sm ring-1 ring-gray-800 overflow-hidden">' +
+          '<div class="px-4 py-2.5 border-b border-gray-800 flex items-center justify-between">' +
+            '<div class="flex items-center gap-2">' +
+              '<div class="flex gap-1">' +
+                '<span class="w-2.5 h-2.5 rounded-full bg-red-400/80"></span>' +
+                '<span class="w-2.5 h-2.5 rounded-full bg-yellow-400/80"></span>' +
+                '<span class="w-2.5 h-2.5 rounded-full bg-green-400/80"></span>' +
+              '</div>' +
+              '<span class="font-mono text-xs text-gray-400 ml-2">' + esc(peek.agentName) + '</span>' +
+            '</div>' +
+            '<span class="font-mono text-[10px] text-gray-600">' + esc(peek.sessionId) + '</span>' +
           '</div>' +
-          (a.branch ? '<div class="font-mono text-xs text-gray-400 mt-1.5 truncate">' + esc(a.branch) + '</div>' : '') +
-          tickets +
+          '<div class="p-3 max-h-[300px] overflow-y-auto">' +
+            '<pre class="tmux-peek font-mono text-green-400/90">' + content + '</pre>' +
+          '</div>' +
         '</div>';
       }).join('');
     }
 
+    // =========================================================================
+    // Render: Sessions Table
+    // =========================================================================
+
     function renderSessions(sessions) {
-      const body = document.getElementById('sessions-body');
+      var body = document.getElementById('sessions-body');
       document.getElementById('sessions-count').textContent = sessions.length;
 
       if (sessions.length === 0) {
-        body.innerHTML = '<tr><td colspan="5" class="text-sm text-gray-400 text-center py-8">No active sessions</td></tr>';
+        body.textContent = '';
+        var tr = document.createElement('tr');
+        var td = document.createElement('td');
+        td.colSpan = 5;
+        td.className = 'text-sm text-gray-400 text-center py-8';
+        td.textContent = 'No active sessions';
+        tr.appendChild(td);
+        body.appendChild(tr);
         return;
       }
 
-      body.innerHTML = sessions.map(s => {
-        const envLabel = s.environment === 'container' ? 'container' : 'host';
-        let statusCls = 'text-gray-500 bg-gray-50 ring-gray-200';
+      body.innerHTML = sessions.map(function(s) { // All values escaped via esc()
+        var envLabel = s.environment === 'container' ? 'container' : 'host';
+        var statusCls = 'text-gray-500 bg-gray-50 ring-gray-200';
         if (s.status === 'running') statusCls = 'text-green-600 bg-green-50 ring-green-200';
         else if (s.status === 'starting') statusCls = 'text-yellow-600 bg-yellow-50 ring-yellow-200';
         else if (s.status === 'orphan') statusCls = 'text-orange-600 bg-orange-50 ring-orange-200';
@@ -226,84 +397,109 @@ export function getDashboardHTML(port: number): string {
           '<td class="px-4 py-3 font-mono text-xs text-gray-400">' + esc(s.sessionId) + '</td>' +
           '<td class="px-4 py-3 font-mono text-xs font-medium text-pink-600">' + esc(s.ticketId) + '</td>' +
           '<td class="px-4 py-3 text-sm text-gray-950">' + esc(s.agentName) + '</td>' +
-          '<td class="px-4 py-3"><span class="font-mono text-[10px] uppercase tracking-widest text-gray-400">' + esc(envLabel) + '</span></td>' +
+          '<td class="px-4 py-3 hidden sm:table-cell"><span class="font-mono text-[10px] uppercase tracking-widest text-gray-400">' + esc(envLabel) + '</span></td>' +
           '<td class="px-4 py-3"><span class="font-mono text-[10px] font-medium px-2 py-0.5 rounded-full ring-1 ' + statusCls + '">' + esc(s.status) + '</span></td>' +
         '</tr>';
       }).join('');
     }
 
+    // =========================================================================
+    // Render: Pull Requests
+    // =========================================================================
+
     function renderPRs(prs) {
-      const list = document.getElementById('pr-list');
+      var list = document.getElementById('pr-list');
       document.getElementById('prs-count').textContent = prs.length;
 
       if (prs.length === 0) {
-        list.innerHTML = '<p class="text-sm text-gray-400 py-8 text-center">No open pull requests</p>';
+        list.textContent = '';
+        var p = document.createElement('p');
+        p.className = 'text-sm text-gray-400 py-8 text-center';
+        p.textContent = 'No open pull requests';
+        list.appendChild(p);
         return;
       }
 
-      list.innerHTML = prs.map(pr => {
-        const ciClass = pr.ciStatus || 'unknown';
-        let ciCls = 'text-gray-500 bg-gray-50 ring-gray-200';
-        let ciLabel = 'unknown';
+      list.innerHTML = prs.map(function(pr) { // All values escaped via esc()
+        var ciClass = pr.ciStatus || 'unknown';
+        var ciCls = 'text-gray-500 bg-gray-50 ring-gray-200';
+        var ciLabel = 'unknown';
         if (ciClass === 'success') { ciCls = 'text-green-600 bg-green-50 ring-green-200'; ciLabel = 'passed'; }
         else if (ciClass === 'failure') { ciCls = 'text-red-600 bg-red-50 ring-red-200'; ciLabel = 'failed'; }
         else if (ciClass === 'pending') { ciCls = 'text-yellow-600 bg-yellow-50 ring-yellow-200'; ciLabel = 'running'; }
-        return '<div class="bg-white rounded-2xl shadow-sm ring-1 ring-gray-200 px-5 py-3.5 flex items-center gap-4 transition-all hover:ring-pink-600/30">' +
-          '<a href="' + esc(pr.url) + '" target="_blank" class="font-mono text-sm font-semibold text-pink-600 hover:underline min-w-[50px]">#' + pr.number + '</a>' +
-          '<span class="text-sm text-gray-950 flex-1">' + esc(pr.title) + '</span>' +
-          (pr.isDraft ? '<span class="font-mono text-[10px] uppercase tracking-widest text-gray-400 ring-1 ring-gray-200 px-2 py-0.5 rounded-full">draft</span>' : '') +
-          '<span class="font-mono text-[10px] text-gray-400 bg-gray-100 px-2 py-0.5 rounded-lg max-w-[220px] truncate">' + esc(pr.headBranch) + '</span>' +
-          '<span class="font-mono text-[10px] font-medium px-2 py-0.5 rounded-full ring-1 whitespace-nowrap ' + ciCls + '">' + ciLabel + '</span>' +
+        return '<div class="pr-item bg-white rounded-2xl shadow-sm ring-1 ring-gray-200 px-4 sm:px-5 py-3 sm:py-3.5 flex items-center gap-3 sm:gap-4 transition-all hover:ring-pink-600/30">' +
+          '<a href="' + esc(pr.url) + '" target="_blank" rel="noopener noreferrer" class="font-mono text-sm font-semibold text-pink-600 hover:underline min-w-[50px]">#' + pr.number + '</a>' +
+          '<span class="text-sm text-gray-950 flex-1 min-w-0 truncate">' + esc(pr.title) + '</span>' +
+          (pr.isDraft ? '<span class="font-mono text-[10px] uppercase tracking-widest text-gray-400 ring-1 ring-gray-200 px-2 py-0.5 rounded-full flex-shrink-0">draft</span>' : '') +
+          '<span class="font-mono text-[10px] text-gray-400 bg-gray-100 px-2 py-0.5 rounded-lg max-w-[220px] truncate hidden sm:inline-flex flex-shrink-0">' + esc(pr.headBranch) + '</span>' +
+          '<span class="font-mono text-[10px] font-medium px-2 py-0.5 rounded-full ring-1 whitespace-nowrap flex-shrink-0 ' + ciCls + '">' + esc(ciLabel) + '</span>' +
         '</div>';
       }).join('');
     }
 
+    // =========================================================================
+    // Render All
+    // =========================================================================
+
     function renderAll(data) {
       document.getElementById('project-name').textContent = data.projectName || data.projectId;
-      const ts = new Date(data.timestamp);
+      var ts = new Date(data.timestamp);
       document.getElementById('last-updated').textContent = ts.toLocaleTimeString();
-      renderBoard(data.board);
-      renderAgents(data.agents);
-      renderSessions(data.sessions);
-      renderPRs(data.prs);
+      renderAgents(data.agents || []);
+      renderBoard(data.board || { columns: [] });
+      renderPeeks(data.tmuxPeeks || []);
+      renderSessions(data.sessions || []);
+      renderPRs(data.prs || []);
     }
 
-    // Initial fetch
-    fetch('/api/data')
-      .then(r => r.json())
-      .then(data => renderAll(data))
-      .catch(err => console.error('Initial fetch failed:', err));
+    // =========================================================================
+    // WebSocket Connection
+    // =========================================================================
 
-    // SSE for live updates
-    const dot = document.getElementById('status-dot');
-    const statusText = document.getElementById('status-text');
+    var dot = document.getElementById('status-dot');
+    var statusText = document.getElementById('status-text');
+    var reconnectDelay = 1000;
 
-    function connectSSE() {
-      const es = new EventSource('/api/events');
+    function connectWebSocket() {
+      var wsUrl = 'ws://localhost:${port}';
+      var ws = new WebSocket(wsUrl);
 
-      es.onopen = () => {
+      ws.onopen = function() {
         dot.className = 'w-2 h-2 rounded-full bg-green-400';
         statusText.textContent = 'Live';
+        reconnectDelay = 1000;
       };
 
-      es.onmessage = (event) => {
+      ws.onmessage = function(event) {
         try {
-          const data = JSON.parse(event.data);
+          var data = JSON.parse(event.data);
           renderAll(data);
         } catch (e) {
-          console.error('SSE parse error:', e);
+          console.error('WS parse error:', e);
         }
       };
 
-      es.onerror = () => {
-        dot.className = 'w-2 h-2 rounded-full bg-red-400';
+      ws.onclose = function() {
+        dot.className = 'w-2 h-2 rounded-full bg-yellow-400';
         statusText.textContent = 'Reconnecting...';
-        es.close();
-        setTimeout(connectSSE, 3000);
+        setTimeout(connectWebSocket, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 1.5, 10000);
+      };
+
+      ws.onerror = function() {
+        dot.className = 'w-2 h-2 rounded-full bg-red-400';
+        statusText.textContent = 'Error';
+        ws.close();
       };
     }
 
-    connectSSE();
+    // Initial fetch via HTTP for fast first paint, then WebSocket for live updates
+    fetch('/api/data')
+      .then(function(r) { return r.json(); })
+      .then(function(data) { renderAll(data); })
+      .catch(function(err) { console.error('Initial fetch failed:', err); });
+
+    connectWebSocket();
   </script>
 </body>
 </html>`

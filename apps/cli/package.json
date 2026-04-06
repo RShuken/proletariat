@@ -32,6 +32,7 @@
     "posthog-node": "^5.28.4",
     "react": "^18.0.0",
     "string-width": "^8.1.1",
+    "ws": "^8.20.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -47,6 +48,7 @@
     "@types/mocha": "^10",
     "@types/node": "^20",
     "@types/react": "^18",
+    "@types/ws": "^8.18.1",
     "chai": "^4",
     "drizzle-kit": "^0.30.0",
     "eslint": "^9",

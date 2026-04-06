@@ -1,11 +1,12 @@
 import { expect } from 'chai'
 import * as http from 'node:http'
+import WebSocket from 'ws'
 import { createDashboardServer, type DashboardServer } from '../../src/lib/dashboard/server.js'
 
 /**
- * Tests for the dashboard HTTP server.
+ * Tests for the dashboard HTTP + WebSocket server.
  *
- * Tests focus on server mechanics (routing, content-types, CORS, SSE setup,
+ * Tests focus on server mechanics (routing, content-types, CORS, WebSocket setup,
  * port conflict, shutdown). Data-gathering routes are tested with a mock
  * storage that resolves instantly, but gatherAgentData/gatherSessionData/
  * gatherPRData call real system commands (gh, tmux) that may timeout.
@@ -99,6 +100,7 @@ describe('Dashboard Server', function (this: Mocha.Suite) {
         res.on('data', (chunk: Buffer) => { body += chunk })
         res.on('end', () => {
           expect(body).to.include('<!DOCTYPE html>')
+          expect(body).to.include('WebSocket')
           done()
         })
       }).on('error', done)
@@ -120,10 +122,54 @@ describe('Dashboard Server', function (this: Mocha.Suite) {
       }).on('error', done)
     })
 
-    // Note: /api/events (SSE) and /api/data routes call gatherDashboardData()
-    // which runs real system commands (gh pr list, tmux). These routes are
-    // tested via E2E tests where the full workspace is available. Here we
-    // only test routes that respond from static data (HTML, 404).
+    it('no longer serves SSE at /api/events', (done) => {
+      http.get(`http://127.0.0.1:${TEST_PORT}/api/events`, (res) => {
+        expect(res.statusCode).to.equal(404)
+        res.resume()
+        res.on('end', done)
+      }).on('error', done)
+    })
+  })
+
+  // ===========================================================================
+  // WebSocket
+  // ===========================================================================
+
+  describe('WebSocket', () => {
+    beforeEach(async () => {
+      dashboard = await createDashboardServer({
+        port: TEST_PORT,
+        storage: mockStorage as any,
+        projectId: 'proj-1',
+        projectName: 'Test Project',
+      })
+    })
+
+    it('accepts WebSocket connections and sends initial data', (done) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${TEST_PORT}`)
+
+      ws.on('message', (data: Buffer) => {
+        try {
+          const parsed = JSON.parse(data.toString())
+          expect(parsed).to.have.property('projectId', 'proj-1')
+          expect(parsed).to.have.property('projectName', 'Test Project')
+          expect(parsed).to.have.property('timestamp')
+          expect(parsed).to.have.property('board')
+          expect(parsed).to.have.property('agents')
+          expect(parsed).to.have.property('sessions')
+          expect(parsed).to.have.property('tmuxPeeks')
+          ws.close()
+          done()
+        } catch (err) {
+          ws.close()
+          done(err)
+        }
+      })
+
+      ws.on('error', (err) => {
+        done(err)
+      })
+    })
   })
 
   // ===========================================================================
