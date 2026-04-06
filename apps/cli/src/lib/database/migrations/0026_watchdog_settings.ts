@@ -1,5 +1,5 @@
 /**
- * Migration 0025 — Watchdog Settings
+ * Migration 0026 — Watchdog Settings
  *
  * Seeds default watchdog configuration into workspace_settings.
  * The agent watchdog monitors running sessions for context exhaustion,

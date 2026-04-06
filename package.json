@@ -21,6 +21,7 @@
     "prlt:isolated": "PRLT_HQ_PATH=/tmp/prlt-test-$RANDOM node apps/cli/bin/run.js",
     "publish:npm": "pnpm --filter @proletariat/cli publish:npm",
     "test": "pnpm -r test",
-    "test:cli": "pnpm --filter @proletariat/cli test"
+    "test:cli": "pnpm --filter @proletariat/cli test",
+    "new-migration": "bash scripts/new-migration.sh"
   }
 }

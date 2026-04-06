@@ -1,7 +1,14 @@
 import { expect } from 'chai'
 import Database from 'better-sqlite3'
+import { readdirSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
 import { runDrizzleMigrations, type Migration } from '../../src/lib/database/migrator.js'
 import { ALL_MIGRATIONS } from '../../src/lib/database/migrations/index.js'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
+const MIGRATIONS_DIR = join(__dirname, '../../src/lib/database/migrations')
 
 describe('Database Migration System', () => {
   function openDb(): Database.Database {
@@ -638,6 +645,57 @@ describe('Database Migration System', () => {
 
     it('catch-up includes 0016 in migration registry', () => {
       expect(ALL_MIGRATIONS.some(m => m.id === '0016' && m.name === 'schema_catchup')).to.be.true
+    })
+  })
+
+  describe('Migration numbering integrity', () => {
+    it('has no duplicate migration IDs in ALL_MIGRATIONS', () => {
+      const ids = ALL_MIGRATIONS.map(m => m.id)
+      const duplicates = ids.filter((id, i) => ids.indexOf(id) !== i)
+      expect(duplicates, `Duplicate migration IDs found: ${duplicates.join(', ')}`).to.have.length(0)
+    })
+
+    it('has no duplicate migration names in ALL_MIGRATIONS', () => {
+      const names = ALL_MIGRATIONS.map(m => m.name)
+      const duplicates = names.filter((name, i) => names.indexOf(name) !== i)
+      expect(duplicates, `Duplicate migration names found: ${duplicates.join(', ')}`).to.have.length(0)
+    })
+
+    it('has no duplicate migration file numbers on disk', () => {
+      const files = readdirSync(MIGRATIONS_DIR)
+        .filter(f => /^\d{4}_.*\.ts$/.test(f))
+        .sort()
+
+      const numbers = files.map(f => f.slice(0, 4))
+      const duplicates = numbers.filter((n, i) => numbers.indexOf(n) !== i)
+      expect(duplicates, `Duplicate migration file numbers found: ${duplicates.join(', ')}`).to.have.length(0)
+    })
+
+    it('has migration IDs in strictly ascending order', () => {
+      for (let i = 1; i < ALL_MIGRATIONS.length; i++) {
+        const prev = ALL_MIGRATIONS[i - 1].id
+        const curr = ALL_MIGRATIONS[i].id
+        expect(curr > prev, `Migration ${curr} should come after ${prev} but ordering is wrong`).to.be.true
+      }
+    })
+
+    it('has migration files that match ALL_MIGRATIONS registry', () => {
+      const files = readdirSync(MIGRATIONS_DIR)
+        .filter(f => /^\d{4}_.*\.ts$/.test(f))
+        .sort()
+
+      const fileIds = files.map(f => f.slice(0, 4))
+      const registryIds = ALL_MIGRATIONS.map(m => m.id)
+
+      // Every file on disk should be registered
+      for (const fileId of fileIds) {
+        expect(registryIds, `Migration file ${fileId} exists on disk but is not registered in ALL_MIGRATIONS`).to.include(fileId)
+      }
+
+      // Every registry entry should have a file
+      for (const regId of registryIds) {
+        expect(fileIds, `Migration ${regId} is registered in ALL_MIGRATIONS but has no file on disk`).to.include(regId)
+      }
     })
   })
 })
