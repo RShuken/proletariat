@@ -5,6 +5,10 @@ import {
   buildSessionName,
 } from '../../src/lib/execution/runners.js'
 import type { ExecutionContext, ExecutorType } from '../../src/lib/execution/types.js'
+import { getCurrentUser, USER_SESSION_SEPARATOR } from '../../src/lib/execution/session-utils.js'
+
+/** Helper: build expected user-prefixed session name */
+const userPrefix = (name: string) => `${getCurrentUser()}${USER_SESSION_SEPARATOR}${name}`
 
 /**
  * Unit tests for Codex executor behavior across all runtime environments.
@@ -188,7 +192,7 @@ describe('Codex Runtime Behavior (TKT-1083)', () => {
     it('should build valid session names for codex-based work', () => {
       const context = makeContext({ actionName: 'implement' })
       const sessionName = buildSessionName(context)
-      expect(sessionName).to.equal('TKT-1083-implement-test-agent')
+      expect(sessionName).to.equal(userPrefix('TKT-1083-implement-test-agent'))
     })
 
     it('should not include executor type in session name', () => {

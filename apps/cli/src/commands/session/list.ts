@@ -13,6 +13,7 @@ import {
   findSessionForExecution,
   isContainerEnvironment,
   checkContainerLiveness,
+  filterSessionsByCurrentUser,
 } from '../../lib/execution/session-utils.js'
 import { PromptCommand } from '../../lib/prompt-command.js'
 import { machineOutputFlags } from '../../lib/pmo/index.js'
@@ -103,8 +104,8 @@ export default class SessionList extends PromptCommand {
       // Track machine execution IDs already covered by workspace DB to avoid duplicates
       const workspaceSessionIds = new Set(activeExecutions.map(e => e.sessionId).filter(Boolean))
 
-      // Get tmux sessions for liveness verification
-      const hostTmuxSessions = getHostTmuxSessionNames()
+      // Get tmux sessions for liveness verification, filtered to current user
+      const hostTmuxSessions = filterSessionsByCurrentUser(getHostTmuxSessionNames())
       const containerTmuxSessions = getContainerTmuxSessionMap()
 
       // Track which tmux sessions we've matched to DB records (for orphan detection)

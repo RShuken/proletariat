@@ -15,6 +15,7 @@ import {
   hasWorkflowScope,
 } from '../../src/lib/execution/runners/shared.js'
 import type { ExecutionContext, TerminalApp } from '../../src/lib/execution/types.js'
+import { getCurrentUser, USER_SESSION_SEPARATOR } from '../../src/lib/execution/session-utils.js'
 
 /**
  * Smoke tests for shared runner utilities (session naming, control mode, docker/github checks).
@@ -31,22 +32,25 @@ const makeContext = (overrides: Partial<ExecutionContext> = {}): ExecutionContex
   ...overrides,
 })
 
+/** Helper: build expected user-prefixed session name */
+const userPrefix = (name: string) => `${getCurrentUser()}${USER_SESSION_SEPARATOR}${name}`
+
 describe('Runner Shared Utilities (TKT-140)', () => {
   // =========================================================================
   // Session Name Helpers
   // =========================================================================
   describe('buildSessionName', () => {
-    it('should include ticketId, action, and agent name', () => {
+    it('should include user prefix, ticketId, action, and agent name', () => {
       const ctx = makeContext({ actionName: 'implement' })
-      expect(buildSessionName(ctx)).to.equal('TKT-999-implement-test-agent')
+      expect(buildSessionName(ctx)).to.equal(userPrefix('TKT-999-implement-test-agent'))
     })
 
     it('should default action to "work"', () => {
-      expect(buildSessionName(makeContext())).to.equal('TKT-999-work-test-agent')
+      expect(buildSessionName(makeContext())).to.equal(userPrefix('TKT-999-work-test-agent'))
     })
 
     it('should default agent to "agent" when agentName is empty', () => {
-      expect(buildSessionName(makeContext({ agentName: '' }))).to.equal('TKT-999-work-agent')
+      expect(buildSessionName(makeContext({ agentName: '' }))).to.equal(userPrefix('TKT-999-work-agent'))
     })
 
     it('should sanitize special characters in action name', () => {
@@ -65,7 +69,7 @@ describe('Runner Shared Utilities (TKT-140)', () => {
     it('should strip leading/trailing hyphens from action', () => {
       const ctx = makeContext({ actionName: '-review-' })
       const result = buildSessionName(ctx)
-      expect(result).to.equal('TKT-999-review-test-agent')
+      expect(result).to.equal(userPrefix('TKT-999-review-test-agent'))
     })
 
     it('should use HQ-scoped naming for orchestrator contexts', () => {
@@ -76,7 +80,7 @@ describe('Runner Shared Utilities (TKT-140)', () => {
         isOrchestrator: true,
         hqName: 'proletariat',
       })
-      expect(buildSessionName(ctx)).to.equal('prlt-orchestrator-proletariat-main')
+      expect(buildSessionName(ctx)).to.equal(userPrefix('prlt-orchestrator-proletariat-main'))
     })
 
     it('should use HQ-scoped naming for named orchestrator', () => {
@@ -87,7 +91,7 @@ describe('Runner Shared Utilities (TKT-140)', () => {
         isOrchestrator: true,
         hqName: 'my-project',
       })
-      expect(buildSessionName(ctx)).to.equal('prlt-orchestrator-my-project-ops')
+      expect(buildSessionName(ctx)).to.equal(userPrefix('prlt-orchestrator-my-project-ops'))
     })
 
     it('should fall back to default hqName when hqName is empty', () => {
@@ -99,7 +103,7 @@ describe('Runner Shared Utilities (TKT-140)', () => {
         hqName: '',
       })
       // Empty hqName means isOrchestrator && context.hqName is falsy, falls back to standard format
-      expect(buildSessionName(ctx)).to.equal('prlt-orchestrator-main')
+      expect(buildSessionName(ctx)).to.equal(userPrefix('prlt-orchestrator-main'))
     })
 
     it('should use standard naming when not orchestrator even with hqName', () => {
@@ -107,7 +111,7 @@ describe('Runner Shared Utilities (TKT-140)', () => {
         hqName: 'proletariat',
         actionName: 'implement',
       })
-      expect(buildSessionName(ctx)).to.equal('TKT-999-implement-test-agent')
+      expect(buildSessionName(ctx)).to.equal(userPrefix('TKT-999-implement-test-agent'))
     })
   })
 

@@ -16,6 +16,7 @@ import {
 } from '../lib/prompt-json.js'
 import { styles } from '../lib/styles.js'
 import { SessionStore } from '../lib/session-store.js'
+import { isSessionVisibleToCurrentUser } from '../lib/execution/session-utils.js'
 
 function formatDuration(ms: number): string {
   const seconds = Math.floor(ms / 1000)
@@ -58,7 +59,9 @@ export default class Ps extends PromptCommand {
       // Reconcile with tmux to update stale sessions
       store.reconcile()
 
-      const sessions = flags.all ? store.list() : store.list('running')
+      const allSessions = flags.all ? store.list() : store.list('running')
+      // Filter to current user's sessions (legacy unprefixed visible to all)
+      const sessions = allSessions.filter(s => isSessionVisibleToCurrentUser(s.sessionName))
 
       if (jsonMode) {
         outputSuccessAsJson({

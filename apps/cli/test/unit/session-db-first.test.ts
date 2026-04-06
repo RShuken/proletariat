@@ -198,6 +198,7 @@ describe('@smoke Session DB-First (PRLT-1139)', () => {
     it('parseSessionName returns parsed info for prlt session names', () => {
       const result = parseSessionName('TKT-123-Implement-my-agent')
       expect(result).to.deep.equal({
+        user: undefined,
         ticketId: 'TKT-123',
         action: 'Implement',
         agentName: 'my-agent',

@@ -3,9 +3,14 @@ import { expect } from 'chai'
 import {
   parseSessionName,
   buildExpectedSessionName,
+  buildLegacySessionName,
   sessionMatchesExecution,
   findSessionForExecution,
   findContainerSessionsByPrefix,
+  getCurrentUser,
+  isSessionVisibleToCurrentUser,
+  filterSessionsByCurrentUser,
+  USER_SESSION_SEPARATOR,
   KNOWN_ACTIONS,
 } from '../../src/lib/execution/session-utils.js'
 
@@ -14,9 +19,20 @@ import {
  */
 describe('Session Utils', () => {
   describe('parseSessionName', () => {
-    it('should parse standard session name format', () => {
+    it('should parse standard legacy session name format', () => {
       const result = parseSessionName('TKT-123-Implement-my-agent')
       expect(result).to.deep.equal({
+        user: undefined,
+        ticketId: 'TKT-123',
+        action: 'Implement',
+        agentName: 'my-agent',
+      })
+    })
+
+    it('should parse user-prefixed session name', () => {
+      const result = parseSessionName('alice--TKT-123-Implement-my-agent')
+      expect(result).to.deep.equal({
+        user: 'alice',
         ticketId: 'TKT-123',
         action: 'Implement',
         agentName: 'my-agent',
@@ -26,6 +42,17 @@ describe('Session Utils', () => {
     it('should parse session name with hyphenated agent name', () => {
       const result = parseSessionName('TKT-878-Implement-stout-page')
       expect(result).to.deep.equal({
+        user: undefined,
+        ticketId: 'TKT-878',
+        action: 'Implement',
+        agentName: 'stout-page',
+      })
+    })
+
+    it('should parse user-prefixed session with hyphenated agent name', () => {
+      const result = parseSessionName('bob--TKT-878-Implement-stout-page')
+      expect(result).to.deep.equal({
+        user: 'bob',
         ticketId: 'TKT-878',
         action: 'Implement',
         agentName: 'stout-page',
@@ -35,6 +62,7 @@ describe('Session Utils', () => {
     it('should parse session name with multi-hyphen agent name', () => {
       const result = parseSessionName('TKT-100-Review-very-long-agent-name')
       expect(result).to.deep.equal({
+        user: undefined,
         ticketId: 'TKT-100',
         action: 'Review',
         agentName: 'very-long-agent-name',
@@ -44,6 +72,7 @@ describe('Session Utils', () => {
     it('should handle lowercase action names', () => {
       const result = parseSessionName('TKT-456-work-test-agent')
       expect(result).to.deep.equal({
+        user: undefined,
         ticketId: 'TKT-456',
         action: 'work',
         agentName: 'test-agent',
@@ -53,6 +82,7 @@ describe('Session Utils', () => {
     it('should handle different ticket ID formats', () => {
       const result = parseSessionName('PROJ-999-Fix-buggy-bot')
       expect(result).to.deep.equal({
+        user: undefined,
         ticketId: 'PROJ-999',
         action: 'Fix',
         agentName: 'buggy-bot',
@@ -78,6 +108,7 @@ describe('Session Utils', () => {
       // Unknown action "CustomAction" should still parse via fallback
       const result = parseSessionName('TKT-123-CustomAction-my-agent')
       expect(result).to.deep.equal({
+        user: undefined,
         ticketId: 'TKT-123',
         action: 'CustomAction',
         agentName: 'my-agent',
@@ -89,27 +120,48 @@ describe('Session Utils', () => {
       // If action is "Implement" (known), agent is "multi-part-name"
       const result = parseSessionName('TKT-123-Implement-multi-part-name')
       expect(result).to.deep.equal({
+        user: undefined,
         ticketId: 'TKT-123',
         action: 'Implement',
         agentName: 'multi-part-name',
       })
     })
+
+    it('should not treat double-dash as user prefix when remainder is not a ticket ID', () => {
+      // "foo--bar-baz" — after splitting on --, remainder "bar-baz" doesn't start with TICKET-ID
+      const result = parseSessionName('foo--bar-baz')
+      expect(result).to.be.null
+    })
   })
 
   describe('buildExpectedSessionName', () => {
-    it('should build session name with default action', () => {
+    const user = getCurrentUser()
+
+    it('should build user-prefixed session name with default action', () => {
       const result = buildExpectedSessionName('TKT-123', 'my-agent')
-      expect(result).to.equal('TKT-123-work-my-agent')
+      expect(result).to.equal(`${user}--TKT-123-work-my-agent`)
     })
 
-    it('should build session name with custom action', () => {
+    it('should build user-prefixed session name with custom action', () => {
       const result = buildExpectedSessionName('TKT-456', 'test-agent', 'Implement')
-      expect(result).to.equal('TKT-456-Implement-test-agent')
+      expect(result).to.equal(`${user}--TKT-456-Implement-test-agent`)
     })
 
     it('should handle hyphenated agent names', () => {
       const result = buildExpectedSessionName('TKT-789', 'stout-page', 'Review')
-      expect(result).to.equal('TKT-789-Review-stout-page')
+      expect(result).to.equal(`${user}--TKT-789-Review-stout-page`)
+    })
+  })
+
+  describe('buildLegacySessionName', () => {
+    it('should build session name without user prefix', () => {
+      const result = buildLegacySessionName('TKT-123', 'my-agent')
+      expect(result).to.equal('TKT-123-work-my-agent')
+    })
+
+    it('should build session name with custom action', () => {
+      const result = buildLegacySessionName('TKT-456', 'test-agent', 'Implement')
+      expect(result).to.equal('TKT-456-Implement-test-agent')
     })
   })
 
@@ -174,37 +226,54 @@ describe('Session Utils', () => {
   })
 
   describe('findSessionForExecution', () => {
-    const availableSessions = [
+    const user = getCurrentUser()
+
+    // Legacy (unprefixed) sessions
+    const legacySessions = [
       'TKT-123-Implement-agent1',
       'TKT-123-Review-agent2',
       'TKT-456-work-my-agent',
       'TKT-789-Fix-buggy-bot',
     ]
 
-    it('should find exact match with known action', () => {
-      const result = findSessionForExecution('TKT-123', 'agent1', availableSessions)
+    it('should find legacy exact match with known action', () => {
+      const result = findSessionForExecution('TKT-123', 'agent1', legacySessions)
       expect(result).to.equal('TKT-123-Implement-agent1')
     })
 
-    it('should find exact match with different action', () => {
-      const result = findSessionForExecution('TKT-123', 'agent2', availableSessions)
+    it('should find legacy exact match with different action', () => {
+      const result = findSessionForExecution('TKT-123', 'agent2', legacySessions)
       expect(result).to.equal('TKT-123-Review-agent2')
     })
 
-    it('should find session with default work action', () => {
-      const result = findSessionForExecution('TKT-456', 'my-agent', availableSessions)
+    it('should find legacy session with default work action', () => {
+      const result = findSessionForExecution('TKT-456', 'my-agent', legacySessions)
       expect(result).to.equal('TKT-456-work-my-agent')
     })
 
+    it('should find user-prefixed session', () => {
+      const sessions = [`${user}--TKT-123-Implement-agent1`]
+      const result = findSessionForExecution('TKT-123', 'agent1', sessions)
+      expect(result).to.equal(`${user}--TKT-123-Implement-agent1`)
+    })
+
+    it('should prefer user-prefixed session over legacy', () => {
+      const sessions = [
+        'TKT-123-Implement-agent1',             // legacy
+        `${user}--TKT-123-Implement-agent1`,     // prefixed
+      ]
+      const result = findSessionForExecution('TKT-123', 'agent1', sessions)
+      // Prefixed is tried first, should be returned
+      expect(result).to.equal(`${user}--TKT-123-Implement-agent1`)
+    })
+
     it('should return null when no match found', () => {
-      const result = findSessionForExecution('TKT-999', 'nonexistent', availableSessions)
+      const result = findSessionForExecution('TKT-999', 'nonexistent', legacySessions)
       expect(result).to.be.null
     })
 
     it('should NOT match wrong agent on same ticket', () => {
-      // TKT-123 has agent1 and agent2
-      // Looking for agent3 should return null, not match agent1 or agent2
-      const result = findSessionForExecution('TKT-123', 'agent3', availableSessions)
+      const result = findSessionForExecution('TKT-123', 'agent3', legacySessions)
       expect(result).to.be.null
     })
 
@@ -220,9 +289,6 @@ describe('Session Utils', () => {
     })
 
     it('should prefer exact known action match over partial match', () => {
-      // If both 'TKT-123-Implement-agent' and 'TKT-123-Custom-agent' exist,
-      // and we're looking for 'agent', we should find 'TKT-123-Implement-agent' first
-      // because 'Implement' is a known action
       const sessions = [
         'TKT-123-Custom-agent',
         'TKT-123-Implement-agent',
@@ -317,6 +383,7 @@ describe('Session Utils', () => {
       it('should handle single-character agent names', () => {
         const result = parseSessionName('TKT-1-work-a')
         expect(result).to.deep.equal({
+          user: undefined,
           ticketId: 'TKT-1',
           action: 'work',
           agentName: 'a',
@@ -326,11 +393,87 @@ describe('Session Utils', () => {
       it('should handle agent names with numbers', () => {
         const result = parseSessionName('TKT-123-Implement-agent42')
         expect(result).to.deep.equal({
+          user: undefined,
           ticketId: 'TKT-123',
           action: 'Implement',
           agentName: 'agent42',
         })
       })
+    })
+  })
+
+  // ===========================================================================
+  // TKT-012: User-scoped session tests
+  // ===========================================================================
+
+  describe('getCurrentUser', () => {
+    it('should return a non-empty string', () => {
+      const user = getCurrentUser()
+      expect(user).to.be.a('string')
+      expect(user.length).to.be.greaterThan(0)
+    })
+
+    it('should respect PRLT_USER env var', () => {
+      const original = process.env.PRLT_USER
+      try {
+        process.env.PRLT_USER = 'test-override'
+        expect(getCurrentUser()).to.equal('test-override')
+      } finally {
+        if (original === undefined) {
+          delete process.env.PRLT_USER
+        } else {
+          process.env.PRLT_USER = original
+        }
+      }
+    })
+  })
+
+  describe('isSessionVisibleToCurrentUser', () => {
+    const user = getCurrentUser()
+
+    it('should show legacy (unprefixed) sessions to everyone', () => {
+      expect(isSessionVisibleToCurrentUser('TKT-123-Implement-agent')).to.be.true
+    })
+
+    it('should show sessions prefixed with current user', () => {
+      expect(isSessionVisibleToCurrentUser(`${user}--TKT-123-Implement-agent`)).to.be.true
+    })
+
+    it('should hide sessions prefixed with a different user', () => {
+      expect(isSessionVisibleToCurrentUser('otheruser--TKT-123-Implement-agent')).to.be.false
+    })
+
+    it('should show unparseable session names to everyone', () => {
+      expect(isSessionVisibleToCurrentUser('random-session')).to.be.true
+    })
+  })
+
+  describe('filterSessionsByCurrentUser', () => {
+    const user = getCurrentUser()
+
+    it('should keep legacy and own sessions, filter out other users', () => {
+      const sessions = [
+        'TKT-1-work-agent1',                   // legacy
+        `${user}--TKT-2-work-agent2`,           // own
+        'otheruser--TKT-3-work-agent3',          // other
+        'random-name',                            // unparseable
+      ]
+      const filtered = filterSessionsByCurrentUser(sessions)
+      expect(filtered).to.deep.equal([
+        'TKT-1-work-agent1',
+        `${user}--TKT-2-work-agent2`,
+        'random-name',
+      ])
+    })
+
+    it('should return empty array for empty input', () => {
+      expect(filterSessionsByCurrentUser([])).to.deep.equal([])
+    })
+  })
+
+  describe('USER_SESSION_SEPARATOR', () => {
+    it('should be double-dash', () => {
+      expect(USER_SESSION_SEPARATOR).to.equal('--')
     })
   })
 })

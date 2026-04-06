@@ -6,7 +6,30 @@
  */
 
 import { execSync, execFileSync } from 'node:child_process'
+import * as os from 'node:os'
 import type { ExecutionEnvironment } from './types.js'
+
+/**
+ * Separator between user prefix and the rest of the session name.
+ * Double-dash chosen because tmux allows it and it's unlikely to appear
+ * in ticket IDs, actions, or agent names.
+ */
+export const USER_SESSION_SEPARATOR = '--'
+
+/**
+ * Get the current OS username for session scoping.
+ * Checks PRLT_USER first (explicit override), then USER (standard),
+ * then os.userInfo().username, falling back to 'unknown'.
+ */
+export function getCurrentUser(): string {
+  if (process.env.PRLT_USER) return process.env.PRLT_USER
+  if (process.env.USER) return process.env.USER
+  try {
+    return os.userInfo().username
+  } catch {
+    return 'unknown'
+  }
+}
 
 /**
  * Capture the last N lines from a tmux pane.
@@ -53,22 +76,39 @@ export const KNOWN_ACTIONS = [
 
 /**
  * Parse a tmux session name following prlt naming convention.
- * Format: {ticketId}-{action}-{agentName}
+ * Handles both user-prefixed and legacy unprefixed formats:
+ *   Prefixed: {user}--{ticketId}-{action}-{agentName}
+ *   Legacy:   {ticketId}-{action}-{agentName}
  *
  * Note: Agent names can contain hyphens (like "stout-page"), so we match
  * from the end using known action names to correctly split the components.
  *
- * Example: "TKT-878-Implement-stout-page" -> { ticketId: "TKT-878", action: "Implement", agentName: "stout-page" }
+ * Example: "alice--TKT-878-Implement-stout-page" -> { user: "alice", ticketId: "TKT-878", ... }
+ * Example: "TKT-878-Implement-stout-page" -> { user: undefined, ticketId: "TKT-878", ... }
  */
-export function parseSessionName(sessionName: string): { ticketId: string; action: string; agentName: string } | null {
-  // First, extract the ticket ID (format: TKT-### or PROJECT-###)
-  const ticketMatch = sessionName.match(/^(TKT-\d+|[A-Z]+-\d+)-/)
+export function parseSessionName(sessionName: string): { user?: string; ticketId: string; action: string; agentName: string } | null {
+  // Strip user prefix if present (user--rest)
+  let user: string | undefined
+  let body = sessionName
+  const sepIdx = sessionName.indexOf(USER_SESSION_SEPARATOR)
+  if (sepIdx > 0) {
+    const candidate = sessionName.slice(0, sepIdx)
+    const rest = sessionName.slice(sepIdx + USER_SESSION_SEPARATOR.length)
+    // Validate that the part after separator looks like a ticket ID start
+    if (/^(TKT-\d+|[A-Z]+-\d+)-/.test(rest)) {
+      user = candidate
+      body = rest
+    }
+  }
+
+  // Extract the ticket ID (format: TKT-### or PROJECT-###)
+  const ticketMatch = body.match(/^(TKT-\d+|[A-Z]+-\d+)-/)
   if (!ticketMatch) {
     return null
   }
 
   const ticketId = ticketMatch[1]
-  const remainder = sessionName.slice(ticketMatch[0].length)
+  const remainder = body.slice(ticketMatch[0].length)
 
   // Try to match known actions (case-insensitive) at the start of the remainder
   for (const action of KNOWN_ACTIONS) {
@@ -80,6 +120,7 @@ export function parseSessionName(sessionName: string): { ticketId: string; actio
       const agentName = remainder.slice(action.length + 1)
       if (agentName) {
         return {
+          user,
           ticketId,
           action: remainder.slice(0, action.length),  // Preserve original casing
           agentName,
@@ -92,6 +133,7 @@ export function parseSessionName(sessionName: string): { ticketId: string; actio
   const parts = remainder.split('-')
   if (parts.length >= 2) {
     return {
+      user,
       ticketId,
       action: parts[0],
       agentName: parts.slice(1).join('-'),
@@ -103,10 +145,19 @@ export function parseSessionName(sessionName: string): { ticketId: string; actio
 
 /**
  * Build expected session name from execution data.
- * Format: {ticketId}-{action}-{agentName}
+ * Format: {user}--{ticketId}-{action}-{agentName}
  * This is the same format used by runners.ts buildSessionName()
  */
 export function buildExpectedSessionName(ticketId: string, agentName: string, action: string = 'work'): string {
+  const user = getCurrentUser()
+  return `${user}${USER_SESSION_SEPARATOR}${ticketId}-${action}-${agentName}`
+}
+
+/**
+ * Build expected session name without a user prefix (legacy format).
+ * Used for matching legacy sessions that predate user-scoped naming.
+ */
+export function buildLegacySessionName(ticketId: string, agentName: string, action: string = 'work'): string {
   return `${ticketId}-${action}-${agentName}`
 }
 
@@ -218,6 +269,29 @@ export function flattenContainerSessions(
 }
 
 /**
+ * Check if a tmux session name belongs to the current user or is a legacy
+ * (unprefixed) session visible to everyone.
+ *
+ * Rules:
+ * - Sessions with no user prefix (legacy) are visible to all users
+ * - Sessions with a user prefix are only visible to that user
+ */
+export function isSessionVisibleToCurrentUser(sessionName: string): boolean {
+  const parsed = parseSessionName(sessionName)
+  if (!parsed) return true  // Can't parse → show to everyone
+  if (!parsed.user) return true  // Legacy unprefixed → visible to all
+  return parsed.user === getCurrentUser()
+}
+
+/**
+ * Filter a list of tmux session names to only those visible to the current user.
+ * Legacy unprefixed sessions are visible to everyone.
+ */
+export function filterSessionsByCurrentUser(sessionNames: string[]): string[] {
+  return sessionNames.filter(isSessionVisibleToCurrentUser)
+}
+
+/**
  * Find container sessions using prefix matching.
  * Handles short vs full container ID mismatches between DB records and docker output.
  */
@@ -239,8 +313,8 @@ export function findContainerSessionsByPrefix(
 
 /**
  * Try to find a matching tmux session for an execution with NULL sessionId.
- * First tries exact matches with known action names, then falls back to
- * partial matching with agent name verification.
+ * First tries user-prefixed names, then legacy unprefixed names, then
+ * falls back to partial matching with agent name verification.
  *
  * @returns The matched session name, or null if no match found
  */
@@ -249,16 +323,25 @@ export function findSessionForExecution(
   agentName: string,
   availableSessions: string[]
 ): string | null {
-  // First, try exact matches with known action names
+  // First, try exact matches with known action names (prefixed + legacy)
   for (const action of KNOWN_ACTIONS) {
+    // Try user-prefixed format
     const expectedName = buildExpectedSessionName(ticketId, agentName, action)
     if (availableSessions.includes(expectedName)) {
       return expectedName
     }
-    // Also try lowercase variant
     const expectedNameLower = buildExpectedSessionName(ticketId, agentName, action.toLowerCase())
     if (availableSessions.includes(expectedNameLower)) {
       return expectedNameLower
+    }
+    // Try legacy unprefixed format
+    const legacyName = buildLegacySessionName(ticketId, agentName, action)
+    if (availableSessions.includes(legacyName)) {
+      return legacyName
+    }
+    const legacyNameLower = buildLegacySessionName(ticketId, agentName, action.toLowerCase())
+    if (availableSessions.includes(legacyNameLower)) {
+      return legacyNameLower
     }
   }
 
