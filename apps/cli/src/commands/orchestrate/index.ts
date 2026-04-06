@@ -28,6 +28,8 @@ import {
   OrchestratePoller,
   TicketScheduler,
   SCHEDULER_POLL_INTERVAL_MS,
+  MessageDelivery,
+  MESSAGE_DELIVERY_INTERVAL_MS,
   loadHooksYaml,
   loadWorkflowYaml,
   syncHooksFromYaml,
@@ -300,8 +302,19 @@ export default class Orchestrate extends PromptCommand {
         void scheduler.tryScheduleNext()
       }, SCHEDULER_POLL_INTERVAL_MS)
 
+      // Set up message delivery — polls message_queue every 5s and delivers
+      // pending messages to agent tmux sessions via send-keys
+      const messageDelivery = new MessageDelivery({
+        workspacePath: workspaceInfo.path,
+        log: (msg) => { if (verbose) this.log(styles.muted(`  [msg] ${msg}`)) },
+      })
+      const messageDeliveryTimer = setInterval(() => {
+        void messageDelivery.deliverPending()
+      }, MESSAGE_DELIVERY_INTERVAL_MS)
+
       if (!jsonMode) {
         this.log(styles.muted(`  Scheduler active — polling every 30s, max ${scheduler.getMaxAgents()} agents`))
+        this.log(styles.muted(`  Message delivery active — polling every 5s`))
       }
 
       // Keep Node.js event loop alive — signal listeners alone don't prevent exit
@@ -316,6 +329,7 @@ export default class Orchestrate extends PromptCommand {
           engine.stop()
           scheduler.stop()
           clearInterval(schedulerTimer)
+          clearInterval(messageDeliveryTimer)
           if (pollTimer) clearInterval(pollTimer)
           if (rl) { rl.close(); rl = null }
           this.log(styles.muted('\n  Orchestrate daemon stopped'))

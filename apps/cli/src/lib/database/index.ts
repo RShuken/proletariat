@@ -138,6 +138,18 @@ export {
   migrateCredentials,
 } from './credential-store.js'
 
+// Message queue operations
+export {
+  type QueuedMessage,
+  enqueueMessage,
+  enqueueBroadcast,
+  getPendingMessages,
+  getMessagesForAgent,
+  markMessageDelivered,
+  markMessageRead,
+  getAllPendingMessages,
+} from './messages.js'
+
 // Database safety (WAL, backup, integrity, repair)
 export {
   enableWALMode,

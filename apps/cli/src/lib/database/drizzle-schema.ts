@@ -746,6 +746,27 @@ export const pmoRoadmapProjects = sqliteTable('pmo_roadmap_projects', {
 }))
 
 // =============================================================================
+// Agent-to-Agent Messaging
+// =============================================================================
+
+/**
+ * Message queue for inter-agent communication
+ */
+export const messageQueue = sqliteTable('message_queue', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  fromAgent: text('from_agent').notNull(),
+  toAgent: text('to_agent').notNull(),
+  message: text('message').notNull(),
+  status: text('status', { enum: ['pending', 'delivered', 'read'] }).notNull().default('pending'),
+  createdAt: text('created_at').default(sql`datetime('now')`),
+  deliveredAt: text('delivered_at'),
+  readAt: text('read_at'),
+}, (table) => ({
+  idxToStatus: index('idx_message_queue_to_status').on(table.toAgent, table.status),
+  idxCreated: index('idx_message_queue_created').on(table.createdAt),
+}))
+
+// =============================================================================
 // Legacy/Deprecated Tables (kept for migration compatibility)
 // =============================================================================
 
@@ -1005,3 +1026,6 @@ export type NewDbPmoExternalExecutionPr = typeof pmoExternalExecutionPrs.$inferI
 
 export type DbMediaItem = typeof mediaItems.$inferSelect
 export type NewDbMediaItem = typeof mediaItems.$inferInsert
+
+export type DbMessageQueue = typeof messageQueue.$inferSelect
+export type NewDbMessageQueue = typeof messageQueue.$inferInsert

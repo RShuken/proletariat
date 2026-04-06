@@ -7,6 +7,7 @@ export { registerWorkTools } from './work.js'
 export { registerActionTools } from './action.js'
 export { registerDietTools } from './diet.js'
 export { registerTmuxTools } from './tmux.js'
+export { registerMessagingTools } from './messaging.js'
 
 // CLI passthrough tools
 export {

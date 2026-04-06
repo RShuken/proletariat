@@ -60,3 +60,6 @@ export type { SimplePollerOptions, PollChange, PollResult } from './simple-polle
 
 export { TicketScheduler, priorityRank, DEFAULT_MAX_AGENTS, SCHEDULER_POLL_INTERVAL_MS } from './scheduler.js'
 export type { SchedulerOptions } from './scheduler.js'
+
+export { MessageDelivery, MESSAGE_DELIVERY_INTERVAL_MS } from './message-delivery.js'
+export type { MessageDeliveryOptions } from './message-delivery.js'
