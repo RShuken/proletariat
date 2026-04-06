@@ -28,6 +28,7 @@ import {
 } from '../lib/execution/session-utils.js'
 import { getContextUsage } from '../lib/execution/context-monitor.js'
 import type { ContextLevel } from '../lib/execution/context-monitor.js'
+import { detectSessionStatus, type SessionStatus } from '../lib/execution/status-detector.js'
 
 // =============================================================================
 // Helpers (exported for testing)
@@ -100,6 +101,8 @@ export interface AgentSnapshot {
   workdir: string
   contextPercent: number | null
   contextLevel: ContextLevel | null
+  /** Detected activity status from tmux pane output (TKT-031) */
+  detectedStatus?: SessionStatus
 }
 
 export function buildAgentSnapshot(
@@ -130,6 +133,9 @@ export function buildAgentSnapshot(
     // Context usage unavailable
   }
 
+  // Detect session activity status from tmux pane (TKT-031)
+  const detected = detectSessionStatus(session.sessionName)
+
   return {
     agentName: session.agentName,
     ticketId: parsed?.ticketId,
@@ -145,6 +151,7 @@ export function buildAgentSnapshot(
     workdir: session.workdir,
     contextPercent,
     contextLevel,
+    detectedStatus: detected.status,
   }
 }
 
@@ -181,9 +188,14 @@ export function renderDashboard(snapshots: AgentSnapshot[]): string {
   for (let i = 0; i < snapshots.length; i++) {
     const snap = snapshots[i]
 
-    // Agent header line
+    // Agent header line with detected activity status (TKT-031)
     const ticketLabel = snap.ticketId ? styles.info(snap.ticketId) + ' ' : ''
-    const statusColor = snap.status === 'running' ? styles.success : styles.warning
+    const activityLabel = snap.detectedStatus === 'WORKING' ? styles.success('WORKING') :
+                          snap.detectedStatus === 'NEEDS_INPUT' ? styles.warning('NEEDS INPUT') :
+                          snap.detectedStatus === 'ERROR' ? styles.error('ERROR') :
+                          snap.detectedStatus === 'COMPLETE' ? styles.info('COMPLETE') :
+                          snap.detectedStatus === 'IDLE' ? styles.muted('IDLE') :
+                          styles.muted(snap.status)
     const gitLabel = snap.gitStatus
       ? styles.muted(' on ') + styles.emphasis(truncate(snap.gitStatus.branch, 30)) +
         (snap.gitStatus.uncommitted > 0
@@ -204,7 +216,7 @@ export function renderDashboard(snapshots: AgentSnapshot[]): string {
       '  ' + ticketLabel +
       styles.emphasis(snap.agentName) +
       styles.muted(' (' + snap.runner + ')') +
-      '  ' + statusColor(snap.status) +
+      '  ' + activityLabel +
       styles.muted('  uptime: ') + snap.uptime +
       ctxLabel +
       gitLabel
@@ -299,6 +311,7 @@ export default class Monitor extends PromptCommand {
               workdir: s.workdir,
               contextPercent: s.contextPercent,
               contextLevel: s.contextLevel,
+              detectedStatus: s.detectedStatus,
             })),
           }, createMetadata('monitor', flags))
           return

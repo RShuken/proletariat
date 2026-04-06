@@ -23,6 +23,7 @@ import {
   findSessionForExecution,
   captureTmuxPane,
 } from '../execution/session-utils.js'
+import { detectSessionStatus, toDashboardStatus } from '../execution/status-detector.js'
 import { listOpenPRs } from '../pr/index.js'
 import type { PRInfo } from '../pr/index.js'
 import type { PMOStorage } from '../pmo/types.js'
@@ -193,9 +194,18 @@ export function gatherAgentData(): DashboardAgent[] {
 
           if (active.length > 0) {
             const exec = active[0]
-            derivedStatus = 'working'
             currentTicket = exec.ticketId
             elapsedSeconds = Math.floor((Date.now() - exec.startedAt.getTime()) / 1000)
+
+            // TKT-031: Use tmux-based status detection for live sessions
+            if (exec.sessionId) {
+              const isContainer = exec.environment === 'devcontainer' || exec.environment === 'docker'
+              const detected = detectSessionStatus(exec.sessionId, isContainer ? exec.containerId : undefined)
+              derivedStatus = toDashboardStatus(detected.status)
+            } else {
+              derivedStatus = 'working'
+            }
+
             if (exec.inputTokens || exec.outputTokens) {
               tokenUsage = {
                 inputTokens: exec.inputTokens ?? 0,
