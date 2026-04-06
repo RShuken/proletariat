@@ -1016,6 +1016,10 @@ export interface PMOStorage {
   deleteTicket(id: string): Promise<void>
   listTickets(projectId: string | undefined, filter?: TicketFilter): Promise<Ticket[]>
 
+  // Atomic Claiming Operations (CAS-based for agent self-coordination)
+  claimTicket(ticketId: string, agentName: string): Promise<{ claimed: boolean; ticket: Ticket | null; claimedBy?: string }>
+  releaseTicket(ticketId: string, agentName: string): Promise<{ released: boolean; ticket: Ticket | null }>
+
   // Subtask Operations
   addSubtask(ticketId: string, title: string): Promise<Subtask>
   toggleSubtask(ticketId: string, subtaskId: string): Promise<Subtask>

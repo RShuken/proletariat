@@ -863,4 +863,58 @@ export class TicketStorage {
 
     return (await this.getTicketById(ticketId)) as Ticket
   }
+
+  // ===========================================================================
+  // Atomic Claiming (Compare-And-Swap)
+  // ===========================================================================
+
+  /**
+   * Atomically claim a ticket using SQLite CAS.
+   * The UPDATE only succeeds if assignee IS NULL, preventing race conditions.
+   */
+  async claimTicket(ticketId: string, agentName: string): Promise<{ claimed: boolean; ticket: Ticket | null; claimedBy?: string }> {
+    const existing = await this.getTicketById(ticketId)
+    if (!existing) {
+      return { claimed: false, ticket: null }
+    }
+
+    // Atomic CAS: only update if assignee is currently NULL
+    const result = this.ctx.db.prepare(
+      `UPDATE pmo_tickets SET assignee = ?, updated_at = ? WHERE id = ? AND assignee IS NULL`
+    ).run(agentName, String(Date.now()), ticketId)
+
+    if (result.changes === 0) {
+      // CAS failed — someone else claimed it (or it was already assigned)
+      const current = await this.getTicketById(ticketId)
+      return { claimed: false, ticket: current, claimedBy: current?.assignee || undefined }
+    }
+
+    this.ctx.updateBoardTimestamp(existing.projectId || 'default')
+    const updated = await this.getTicketById(ticketId)
+    return { claimed: true, ticket: updated }
+  }
+
+  /**
+   * Release a ticket claim. Only the current assignee can release.
+   * Uses CAS to ensure only the holding agent can release.
+   */
+  async releaseTicket(ticketId: string, agentName: string): Promise<{ released: boolean; ticket: Ticket | null }> {
+    const existing = await this.getTicketById(ticketId)
+    if (!existing) {
+      return { released: false, ticket: null }
+    }
+
+    // Atomic CAS: only clear assignee if it matches the requesting agent
+    const result = this.ctx.db.prepare(
+      `UPDATE pmo_tickets SET assignee = NULL, updated_at = ? WHERE id = ? AND assignee = ?`
+    ).run(String(Date.now()), ticketId, agentName)
+
+    if (result.changes === 0) {
+      return { released: false, ticket: existing }
+    }
+
+    this.ctx.updateBoardTimestamp(existing.projectId || 'default')
+    const updated = await this.getTicketById(ticketId)
+    return { released: true, ticket: updated }
+  }
 }
