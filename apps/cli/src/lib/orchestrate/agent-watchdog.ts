@@ -34,6 +34,8 @@ import {
   findSessionLogPath,
   parseSessionTokensSync,
 } from '../execution/token-parser.js'
+import { AutoResponder } from './auto-responder.js'
+import type { AutoRespondAction, SessionInfo } from './auto-responder.js'
 
 // =============================================================================
 // Constants
@@ -66,15 +68,8 @@ const POKE_COOLDOWN_MS = 5 * 60 * 1000
 /** Number of tmux pane lines to capture for comparison. */
 const PANE_CAPTURE_LINES = 50
 
-/** Patterns that indicate a permission prompt in Claude Code output. */
-const PERMISSION_PATTERNS = [
-  /Do you want to proceed\?/i,
-  /Allow .* to run/i,
-  /\(Y\)es.*\(N\)o/i,
-  /Press Enter to allow/i,
-  /Allow once|Allow always|Deny/i,
-  /Do you trust/i,
-]
+/** Default cooldown for auto-responder (ms). */
+const AUTO_RESPOND_COOLDOWN_MS = 10_000
 
 // =============================================================================
 // Types
@@ -117,7 +112,7 @@ export interface WatchdogAction {
   executionId: string
   agentName: string
   ticketId: string
-  action: 'compact' | 'restart' | 'poke' | 'auto_permit'
+  action: 'compact' | 'restart' | 'poke' | 'auto_permit' | 'auto_respond'
   detail: string
 }
 
@@ -178,6 +173,9 @@ export class AgentWatchdog {
   /** Dedicated log file path */
   private logFilePath: string | null = null
 
+  /** Auto-responder for stuck prompt detection */
+  private autoResponder: AutoResponder
+
   constructor(options: AgentWatchdogOptions) {
     this.storage = options.storage
     this.log = options.log ?? (() => {})
@@ -195,6 +193,16 @@ export class AgentWatchdog {
       parseSessionTokensSync: d.parseSessionTokensSync ?? parseSessionTokensSync,
       restartSession: d.restartSession ?? defaultRestartSession,
     }
+
+    // Initialize auto-responder with same deps
+    this.autoResponder = new AutoResponder({
+      deps: {
+        captureTmuxPane: this.deps.captureTmuxPane,
+        sendTmuxMessage: this.deps.sendTmuxMessage,
+      },
+      log: this.log,
+      cooldownMs: AUTO_RESPOND_COOLDOWN_MS,
+    })
   }
 
   /**
@@ -207,6 +215,8 @@ export class AgentWatchdog {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true })
     }
+    // Share log file with auto-responder
+    this.autoResponder.setLogFile(logPath)
   }
 
   /**
@@ -255,9 +265,9 @@ export class AgentWatchdog {
       const compactAction = this.checkContextExhaustion(exec)
       if (compactAction) result.actions.push(compactAction)
 
-      // 3. Permission prompt detection (only for danger mode)
-      const permitAction = this.checkPermissionPrompt(exec)
-      if (permitAction) result.actions.push(permitAction)
+      // 3. Auto-respond to stuck prompts (permission, continue, plan approval)
+      const respondAction = this.checkAutoRespond(exec)
+      if (respondAction) result.actions.push(respondAction)
 
       // 4. Stuck detection
       const stuckAction = this.checkStuckAgent(exec)
@@ -266,6 +276,10 @@ export class AgentWatchdog {
 
     // Clean up tracking for executions that are no longer active
     this.cleanupStaleTracking(activeIds)
+
+    // Clean up auto-responder cooldown tracking
+    const activeSessionIds = new Set(hostExecs.map(e => e.sessionId).filter(Boolean) as string[])
+    this.autoResponder.cleanupSessions(activeSessionIds)
 
     return result
   }
@@ -495,43 +509,41 @@ export class AgentWatchdog {
   }
 
   // ===========================================================================
-  // Permission Prompt Detection
+  // Auto-Respond to Stuck Prompts
   // ===========================================================================
 
   /**
-   * Check if an agent is waiting at a permission prompt.
-   * Only acts if the execution is in danger mode (YOLO) — auto-sends 'y'.
+   * Check if an agent is waiting at a stuck prompt and auto-respond.
+   * Delegates to AutoResponder which handles prompt classification, cooldown,
+   * and logging. Supports permission, continue, plan approval, and model
+   * selection (never auto-responded) prompt categories.
    */
-  private checkPermissionPrompt(exec: AgentWork): WatchdogAction | null {
-    // Only auto-permit in danger mode
-    if (exec.permissionMode !== 'danger') return null
-
-    const paneContent = this.deps.captureTmuxPane(exec.sessionId!, 20)
-    if (!paneContent) return null
-
-    const isPermissionPrompt = PERMISSION_PATTERNS.some(pattern => pattern.test(paneContent))
-    if (!isPermissionPrompt) return null
-
-    // Auto-send 'y' to approve the permission
-    try {
-      this.deps.sendTmuxMessage(exec.sessionId!, 'y', undefined)
-
-      const detail = 'Permission prompt detected in danger mode — auto-sent y'
-      this.logAction('auto_permit', exec, detail)
-
-      return {
-        timestamp: new Date(),
-        executionId: exec.id,
-        agentName: exec.agentName,
-        ticketId: exec.ticketId,
-        action: 'auto_permit',
-        detail,
-      }
-    } catch (error) {
-      this.log(`[agent-watchdog] Failed to auto-permit ${exec.agentName}: ${error instanceof Error ? error.message : error}`)
+  private checkAutoRespond(exec: AgentWork): WatchdogAction | null {
+    const session: SessionInfo = {
+      executionId: exec.id,
+      sessionId: exec.sessionId!,
+      agentName: exec.agentName,
+      ticketId: exec.ticketId,
+      permissionMode: exec.permissionMode === 'danger' ? 'danger' : 'safe',
+      containerId: exec.containerId ?? undefined,
     }
 
-    return null
+    const respondAction = this.autoResponder.check(session)
+    if (!respondAction) return null
+
+    // Map auto-responder category back to watchdog action type
+    const actionType = respondAction.category === 'permission' ? 'auto_permit' as const : 'auto_respond' as const
+    const detail = `${respondAction.category} prompt detected — auto-sent "${respondAction.response}" for: ${respondAction.matchedText}`
+    this.logAction(actionType, exec, detail)
+
+    return {
+      timestamp: respondAction.timestamp,
+      executionId: exec.id,
+      agentName: exec.agentName,
+      ticketId: exec.ticketId,
+      action: actionType,
+      detail,
+    }
   }
 
   // ===========================================================================
@@ -588,6 +600,7 @@ export class AgentWatchdog {
     this.lastCompactTime.clear()
     this.lastPokeTime.clear()
     this.restartedExecutions.clear()
+    this.autoResponder.reset()
   }
 }
 
@@ -629,6 +642,10 @@ export const WATCHDOG_SETTINGS = {
   contextThreshold: 'watchdog.context_threshold',
   /** Stuck timeout in seconds (default: 300) */
   stuckTimeoutSecs: 'watchdog.stuck_timeout_secs',
+  /** Enable YOLO auto-respond for stuck prompts (default: true in danger mode) */
+  autoRespondEnabled: 'auto_respond.enabled',
+  /** Cooldown between auto-responses in seconds (default: 10) */
+  autoRespondCooldownSecs: 'auto_respond.cooldown_secs',
 } as const
 
 /**
@@ -643,6 +660,8 @@ export function readWatchdogConfig(db: WatchdogConfigDb): {
   autoPermit: boolean
   contextThreshold: number
   stuckTimeoutSecs: number
+  autoRespondEnabled: boolean
+  autoRespondCooldownSecs: number
 } {
   const getSetting = (key: string): string | null => {
     try {
@@ -661,5 +680,7 @@ export function readWatchdogConfig(db: WatchdogConfigDb): {
     autoPermit: getSetting(WATCHDOG_SETTINGS.autoPermit) !== 'false',
     contextThreshold: parseFloat(getSetting(WATCHDOG_SETTINGS.contextThreshold) ?? '0.20'),
     stuckTimeoutSecs: parseInt(getSetting(WATCHDOG_SETTINGS.stuckTimeoutSecs) ?? '300', 10),
+    autoRespondEnabled: getSetting(WATCHDOG_SETTINGS.autoRespondEnabled) !== 'false',
+    autoRespondCooldownSecs: parseInt(getSetting(WATCHDOG_SETTINGS.autoRespondCooldownSecs) ?? '10', 10),
   }
 }
