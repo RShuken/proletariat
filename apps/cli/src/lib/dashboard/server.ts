@@ -8,7 +8,9 @@
 import * as http from 'node:http'
 import { WebSocketServer, type WebSocket } from 'ws'
 import { getDashboardHTML } from './html.js'
-import { gatherDashboardData } from './data.js'
+import { gatherDashboardData, gatherSessionData, type DashboardSession } from './data.js'
+import { captureTmuxPane, sendTmuxMessage } from '../execution/session-utils.js'
+import { stripAnsi } from '../styles.js'
 import type { PMOStorage } from '../pmo/types.js'
 
 const WS_BROADCAST_INTERVAL_MS = 3_000
@@ -216,6 +218,23 @@ export function createDashboardServer(options: DashboardServerOptions): Promise<
       return
     }
 
+    // =====================================================================
+    // Session API routes
+    // =====================================================================
+
+    // GET /api/sessions — list all running sessions with status
+    if (url === '/api/sessions' && req.method === 'GET') {
+      try {
+        const sessions = gatherSessionData()
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ sessions }))
+      } catch {
+        res.writeHead(500, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'Failed to gather session data' }))
+      }
+      return
+    }
+
     // POST /api/board/:ticketId/release — release a claim
     const releaseMatch = url.match(/^\/api\/board\/([^/]+)\/release$/)
     if (releaseMatch && req.method === 'POST') {
@@ -253,6 +272,98 @@ export function createDashboardServer(options: DashboardServerOptions): Promise<
         } catch (err) {
           res.writeHead(500, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ success: false, error: err instanceof Error ? err.message : 'Internal error' }))
+        }
+      })
+      return
+    }
+
+    // GET /api/sessions/:name/peek?lines=50 — capture last N lines from tmux pane
+    const peekMatch = url.match(/^\/api\/sessions\/([^/]+)\/peek(\?.*)?$/)
+    if (peekMatch && req.method === 'GET') {
+      const sessionName = decodeURIComponent(peekMatch[1])
+      const params = new URLSearchParams(peekMatch[2]?.slice(1) || '')
+      const lines = Math.min(Math.max(parseInt(params.get('lines') || '50', 10) || 50, 1), 500)
+      const format = params.get('format') || 'json'
+
+      // Find the session to determine if it's container-based
+      let sessions: DashboardSession[]
+      try {
+        sessions = gatherSessionData()
+      } catch {
+        res.writeHead(500, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'Failed to gather session data' }))
+        return
+      }
+
+      const session = sessions.find(s => s.sessionId === sessionName)
+      if (!session) {
+        res.writeHead(404, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: `Session not found: ${sessionName}` }))
+        return
+      }
+
+      const raw = captureTmuxPane(session.sessionId, lines, session.containerId)
+      if (raw === null) {
+        res.writeHead(502, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'Failed to capture tmux pane' }))
+        return
+      }
+
+      const cleaned = stripAnsi(raw)
+      const linesArray = cleaned.split('\n').slice(-lines)
+
+      if (format === 'text') {
+        res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' })
+        res.end(linesArray.join('\n'))
+      } else {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({
+          sessionId: session.sessionId,
+          agentName: session.agentName,
+          lines: linesArray,
+        }))
+      }
+      return
+    }
+
+    // POST /api/sessions/:name/send — send text to tmux session
+    const sendMatch = url.match(/^\/api\/sessions\/([^/]+)\/send$/)
+    if (sendMatch && req.method === 'POST') {
+      const sessionName = decodeURIComponent(sendMatch[1])
+
+      let body = ''
+      req.on('data', (chunk: Buffer) => { body += chunk.toString() })
+      req.on('end', () => {
+        try {
+          const { text } = JSON.parse(body)
+          if (typeof text !== 'string') {
+            res.writeHead(400, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ error: 'text field is required and must be a string' }))
+            return
+          }
+
+          let sessions: DashboardSession[]
+          try {
+            sessions = gatherSessionData()
+          } catch {
+            res.writeHead(500, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ error: 'Failed to gather session data' }))
+            return
+          }
+
+          const session = sessions.find(s => s.sessionId === sessionName)
+          if (!session) {
+            res.writeHead(404, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ error: `Session not found: ${sessionName}` }))
+            return
+          }
+
+          sendTmuxMessage(session.sessionId, text, session.containerId)
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ ok: true, sessionId: session.sessionId }))
+        } catch (err) {
+          res.writeHead(500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'Internal error' }))
         }
       })
       return
