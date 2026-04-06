@@ -334,6 +334,37 @@ export function getDashboardHTML(port: number): string {
     // Render: Tmux Output Peek
     // =========================================================================
 
+    function fetchPeek(sessionId) {
+      return fetch('/api/sessions/' + encodeURIComponent(sessionId) + '/peek?lines=50')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var pre = document.getElementById('peek-pre-' + sessionId);
+          if (pre && data.lines) {
+            pre.textContent = data.lines.join('\\n');
+          }
+        })
+        .catch(function() {});
+    }
+
+    function sendToSession(sessionId) {
+      var input = document.getElementById('send-input-' + sessionId);
+      if (!input || !input.value.trim()) return;
+      var text = input.value;
+      input.value = '';
+      input.disabled = true;
+      fetch('/api/sessions/' + encodeURIComponent(sessionId) + '/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: text }),
+      }).then(function() {
+        input.disabled = false;
+        input.focus();
+        setTimeout(function() { fetchPeek(sessionId); }, 500);
+      }).catch(function() {
+        input.disabled = false;
+      });
+    }
+
     function renderPeeks(peeks) {
       var section = document.getElementById('peek-section');
       var grid = document.getElementById('peek-grid');
@@ -346,8 +377,11 @@ export function getDashboardHTML(port: number): string {
 
       section.classList.remove('hidden');
 
-      grid.innerHTML = peeks.map(function(peek) { // All values escaped via esc()
+      // All values escaped via esc() — innerHTML is safe here because every
+      // dynamic value goes through esc() which uses textContent assignment
+      grid.innerHTML = peeks.map(function(peek) {
         var content = (peek.lines || []).map(function(l) { return esc(l); }).join('\\n');
+        var sid = esc(peek.sessionId);
         return '<div class="bg-gray-950 rounded-2xl shadow-sm ring-1 ring-gray-800 overflow-hidden">' +
           '<div class="px-4 py-2.5 border-b border-gray-800 flex items-center justify-between">' +
             '<div class="flex items-center gap-2">' +
@@ -358,10 +392,22 @@ export function getDashboardHTML(port: number): string {
               '</div>' +
               '<span class="font-mono text-xs text-gray-400 ml-2">' + esc(peek.agentName) + '</span>' +
             '</div>' +
-            '<span class="font-mono text-[10px] text-gray-600">' + esc(peek.sessionId) + '</span>' +
+            '<div class="flex items-center gap-2">' +
+              '<span class="font-mono text-[10px] text-gray-600">' + sid + '</span>' +
+              '<button onclick="fetchPeek(\\''+sid.replace(/'/g,"\\\\'")+'\\')" class="text-gray-600 hover:text-green-400 transition-colors" title="Refresh">' +
+                '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>' +
+              '</button>' +
+            '</div>' +
           '</div>' +
           '<div class="p-3 max-h-[300px] overflow-y-auto">' +
-            '<pre class="tmux-peek font-mono text-green-400/90">' + content + '</pre>' +
+            '<pre id="peek-pre-' + sid + '" class="tmux-peek font-mono text-green-400/90">' + content + '</pre>' +
+          '</div>' +
+          '<div class="px-3 pb-3 pt-1 border-t border-gray-800/50">' +
+            '<form onsubmit="event.preventDefault();sendToSession(\\''+sid.replace(/'/g,"\\\\'")+'\\')" class="flex gap-2">' +
+              '<input id="send-input-' + sid + '" type="text" placeholder="Send message..." ' +
+                'class="flex-1 bg-gray-900 text-green-400 font-mono text-xs px-3 py-1.5 rounded-lg border border-gray-800 focus:border-green-400/50 focus:outline-none placeholder-gray-700" />' +
+              '<button type="submit" class="px-3 py-1.5 bg-green-400/10 text-green-400 font-mono text-xs rounded-lg hover:bg-green-400/20 transition-colors">Send</button>' +
+            '</form>' +
           '</div>' +
         '</div>';
       }).join('');
