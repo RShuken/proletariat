@@ -71,6 +71,12 @@ interface AgentWorkRow {
   last_heartbeat: string | null
   lifecycle_state: string | null
   retries: number | null
+  input_tokens: number | null
+  output_tokens: number | null
+  cache_read_tokens: number | null
+  cache_creation_tokens: number | null
+  model: string | null
+  estimated_cost_usd: number | null
 }
 
 // =============================================================================
@@ -105,6 +111,12 @@ function rowToAgentWork(row: AgentWorkRow): AgentWork {
     lastHeartbeat: row.last_heartbeat ? new Date(row.last_heartbeat) : undefined,
     lifecycleState: (row.lifecycle_state as LifecycleState) || undefined,
     retries: row.retries ?? undefined,
+    inputTokens: row.input_tokens ?? undefined,
+    outputTokens: row.output_tokens ?? undefined,
+    cacheReadTokens: row.cache_read_tokens ?? undefined,
+    cacheCreationTokens: row.cache_creation_tokens ?? undefined,
+    model: row.model || undefined,
+    estimatedCostUsd: row.estimated_cost_usd ?? undefined,
   }
 }
 
@@ -565,6 +577,88 @@ export class ExecutionStorage {
     }
 
     return sessionMap
+  }
+
+  // ===========================================================================
+  // Token Usage Methods (TKT-013)
+  // ===========================================================================
+
+  /**
+   * Update token usage for an execution after session completes.
+   */
+  updateTokenUsage(id: string, usage: {
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
+    model: string | null
+    estimatedCostUsd: number
+  }): void {
+    this.db.prepare(`
+      UPDATE ${T.agent_work}
+      SET input_tokens = ?, output_tokens = ?, cache_read_tokens = ?,
+          cache_creation_tokens = ?, model = ?, estimated_cost_usd = ?
+      WHERE id = ?
+    `).run(
+      usage.inputTokens,
+      usage.outputTokens,
+      usage.cacheReadTokens,
+      usage.cacheCreationTokens,
+      usage.model,
+      usage.estimatedCostUsd,
+      id,
+    )
+  }
+
+  /**
+   * Get daily token usage aggregation across all sessions.
+   * Returns rows ordered by date descending.
+   */
+  getDailyTokenUsage(opts?: { days?: number; agentName?: string }): Array<{
+    date: string
+    sessionCount: number
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
+    estimatedCostUsd: number
+  }> {
+    const days = opts?.days || 30
+    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000
+
+    let query = `
+      SELECT
+        date(started_at / 1000, 'unixepoch', 'localtime') as date,
+        COUNT(*) as sessionCount,
+        COALESCE(SUM(input_tokens), 0) as inputTokens,
+        COALESCE(SUM(output_tokens), 0) as outputTokens,
+        COALESCE(SUM(cache_read_tokens), 0) as cacheReadTokens,
+        COALESCE(SUM(cache_creation_tokens), 0) as cacheCreationTokens,
+        COALESCE(SUM(estimated_cost_usd), 0) as estimatedCostUsd
+      FROM ${T.agent_work}
+      WHERE started_at > ?
+    `
+    const params: (string | number)[] = [cutoff]
+
+    if (opts?.agentName) {
+      query += ` AND agent_name = ?`
+      params.push(opts.agentName)
+    }
+
+    query += `
+      GROUP BY date(started_at / 1000, 'unixepoch', 'localtime')
+      ORDER BY date DESC
+    `
+
+    return this.db.prepare(query).all(...params) as Array<{
+      date: string
+      sessionCount: number
+      inputTokens: number
+      outputTokens: number
+      cacheReadTokens: number
+      cacheCreationTokens: number
+      estimatedCostUsd: number
+    }>
   }
 
   // ===========================================================================

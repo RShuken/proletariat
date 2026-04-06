@@ -20,7 +20,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { getWorkspaceInfo } from '../../lib/agents/commands.js'
 import { openWorkspaceDatabase } from '../../lib/database/index.js'
-import { ExecutionStorage, type AgentWork } from '../../lib/execution/index.js'
+import { ExecutionStorage, type AgentWork, findSessionLogPath, parseSessionTokensSync } from '../../lib/execution/index.js'
 import { cleanupAgentContainer } from '../../lib/execution/container-cleanup.js'
 import { trackEvent } from '../../lib/telemetry/analytics.js'
 import { PromptCommand } from '../../lib/prompt-command.js'
@@ -173,6 +173,20 @@ export default class SessionReport extends PromptCommand {
       // Update execution status
       executionStorage.updateStatus(execution.id, executionStatus)
 
+      // TKT-013: Parse Claude Code JSONL logs for token usage
+      let tokenUsage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number; model: string | null; estimatedCostUsd: number } | undefined
+      if (execution.sessionId) {
+        const logPath = findSessionLogPath(execution.sessionId)
+        if (logPath) {
+          try {
+            tokenUsage = parseSessionTokensSync(logPath)
+            executionStorage.updateTokenUsage(execution.id, tokenUsage)
+          } catch {
+            // Token parsing is best-effort — never block session cleanup
+          }
+        }
+      }
+
       // PRLT-1224: Ticket transition — move ticket based on outcome.
       // If a PR was created (by agent or safety net), move to review.
       // Otherwise, move to ready (reset for retry or manual pickup).
@@ -259,6 +273,14 @@ export default class SessionReport extends PromptCommand {
         cleanupError: cleanupResult.error,
         safetyNet: safetyNetResult,
         ticketTransition,
+        tokenUsage: tokenUsage ? {
+          inputTokens: tokenUsage.inputTokens,
+          outputTokens: tokenUsage.outputTokens,
+          cacheReadTokens: tokenUsage.cacheReadTokens,
+          cacheCreationTokens: tokenUsage.cacheCreationTokens,
+          model: tokenUsage.model,
+          estimatedCostUsd: tokenUsage.estimatedCostUsd,
+        } : undefined,
       }
 
       if (jsonMode) {
@@ -288,6 +310,9 @@ export default class SessionReport extends PromptCommand {
         } else if (safetyNetResult.autoProposeFailed) {
           this.log(`  ⚠ Safety net: auto-propose failed — ${safetyNetResult.error}`)
         }
+      }
+      if (tokenUsage && tokenUsage.inputTokens > 0) {
+        this.log(`  Tokens: ${tokenUsage.inputTokens.toLocaleString()} in / ${tokenUsage.outputTokens.toLocaleString()} out (cost: $${tokenUsage.estimatedCostUsd.toFixed(4)})`)
       }
       if (ticketTransition) {
         this.log(`  Ticket: moved to ${ticketTransition}`)

@@ -169,6 +169,13 @@ export interface AgentWork {
   lastHeartbeat?: Date
   lifecycleState?: LifecycleState
   retries?: number
+  // Token usage tracking (TKT-013)
+  inputTokens?: number
+  outputTokens?: number
+  cacheReadTokens?: number
+  cacheCreationTokens?: number
+  model?: string
+  estimatedCostUsd?: number
 }
 
 /**
