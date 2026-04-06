@@ -147,6 +147,117 @@ export function createDashboardServer(options: DashboardServerOptions): Promise<
       return
     }
 
+    // POST /api/board/:ticketId/claim — atomic CAS claiming
+    const claimMatch = url.match(/^\/api\/board\/([^/]+)\/claim$/)
+    if (claimMatch && req.method === 'POST') {
+      const ticketId = decodeURIComponent(claimMatch[1])
+      let body = ''
+      req.on('data', (chunk: Buffer) => { body += chunk.toString() })
+      req.on('end', async () => {
+        try {
+          const { agent_name } = JSON.parse(body)
+          if (!agent_name) {
+            res.writeHead(400, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ success: false, error: 'agent_name is required' }))
+            return
+          }
+          const result = await storage.claimTicket(ticketId, agent_name)
+          if (!result.ticket) {
+            res.writeHead(404, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ success: false, error: `Ticket not found: ${ticketId}` }))
+            return
+          }
+          if (!result.claimed) {
+            res.writeHead(409, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({
+              success: false,
+              error: `Ticket already claimed by ${result.claimedBy}`,
+              claimed_by: result.claimedBy,
+            }))
+            return
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            success: true,
+            ticket: { id: result.ticket.id, title: result.ticket.title, assignee: result.ticket.assignee, priority: result.ticket.priority, statusCategory: result.ticket.statusCategory },
+          }))
+        } catch (err) {
+          res.writeHead(500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ success: false, error: err instanceof Error ? err.message : 'Internal error' }))
+        }
+      })
+      return
+    }
+
+    // GET /api/board/available — list unassigned tickets ready for work
+    if (url.startsWith('/api/board/available') && req.method === 'GET') {
+      try {
+        const tickets = await storage.listTickets(projectId, { statusCategory: 'unstarted' })
+        const available = tickets
+          .filter((t) => !t.assignee)
+          .sort((a, b) => {
+            // Sort by priority: P0 > P1 > P2 > P3 > null
+            const pa = a.priority || 'P9'
+            const pb = b.priority || 'P9'
+            return pa.localeCompare(pb)
+          })
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({
+          success: true,
+          tickets: available.map((t) => ({
+            id: t.id, title: t.title, priority: t.priority, category: t.category,
+            statusCategory: t.statusCategory, statusName: t.statusName,
+          })),
+        }))
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ success: false, error: err instanceof Error ? err.message : 'Internal error' }))
+      }
+      return
+    }
+
+    // POST /api/board/:ticketId/release — release a claim
+    const releaseMatch = url.match(/^\/api\/board\/([^/]+)\/release$/)
+    if (releaseMatch && req.method === 'POST') {
+      const ticketId = decodeURIComponent(releaseMatch[1])
+      let body = ''
+      req.on('data', (chunk: Buffer) => { body += chunk.toString() })
+      req.on('end', async () => {
+        try {
+          const { agent_name } = JSON.parse(body)
+          if (!agent_name) {
+            res.writeHead(400, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ success: false, error: 'agent_name is required' }))
+            return
+          }
+          const result = await storage.releaseTicket(ticketId, agent_name)
+          if (!result.ticket) {
+            res.writeHead(404, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ success: false, error: `Ticket not found: ${ticketId}` }))
+            return
+          }
+          if (!result.released) {
+            res.writeHead(409, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({
+              success: false,
+              error: `Cannot release: ticket is assigned to ${result.ticket.assignee || 'nobody'}`,
+              claimed_by: result.ticket.assignee,
+            }))
+            return
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            success: true,
+            ticket: { id: result.ticket.id, title: result.ticket.title, assignee: result.ticket.assignee },
+          }))
+        } catch (err) {
+          res.writeHead(500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ success: false, error: err instanceof Error ? err.message : 'Internal error' }))
+        }
+      })
+      return
+    }
+
     // Handle CORS preflight for POST endpoints
     if (req.method === 'OPTIONS') {
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')

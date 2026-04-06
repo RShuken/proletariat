@@ -317,6 +317,14 @@ export class SQLiteStorage implements PMOStorage {
     return this.ticketStorage.listTickets(projectId, filter)
   }
 
+  async claimTicket(ticketId: string, agentName: string): Promise<{ claimed: boolean; ticket: Ticket | null; claimedBy?: string }> {
+    return this.ticketStorage.claimTicket(ticketId, agentName)
+  }
+
+  async releaseTicket(ticketId: string, agentName: string): Promise<{ released: boolean; ticket: Ticket | null }> {
+    return this.ticketStorage.releaseTicket(ticketId, agentName)
+  }
+
   // ===========================================================================
   // Subtask Operations
   // ===========================================================================

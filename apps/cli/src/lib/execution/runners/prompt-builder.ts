@@ -238,6 +238,7 @@ function buildOrchestratorBody(hqName: string, context: ExecutionContext): strin
   prompt += `\`\`\`\n`
   prompt += `- Review: \`--action review\` (model decides whether to comment, fix, or both)\n\n`
   prompt += buildOrchestratorAntiPatterns()
+  prompt += buildClaimingApiSection(context.dashboardPort)
   prompt += buildIntegrationCommandsSection(context.connectedIntegrations)
   prompt += `## Workflow\n`
   prompt += `- Merge PRs: \`prlt work ship <ticket-id>\` (squash-merges and moves ticket to Done)\n`
@@ -350,6 +351,31 @@ export function buildTicketOperationsGuidance(): string {
   section += `- \`prlt work propose <id>\` — create PR and move to review\n\n`
   section += `**NEVER** use \`gh\`, \`curl\`, or raw API calls to interact with Linear, Jira, Asana, or other external services. `
   section += `Always use the corresponding \`prlt\` commands.\n\n`
+  return section
+}
+
+// =============================================================================
+// Task Claiming API Reference (TKT-026)
+// =============================================================================
+
+/**
+ * Build the atomic task claiming API reference section for agent prompts.
+ * Tells agents about the REST API for self-coordinating task assignment.
+ */
+export function buildClaimingApiSection(dashboardPort?: number): string {
+  if (!dashboardPort) return ''
+  const base = `http://localhost:${dashboardPort}`
+  let section = `\n## Task Claiming API (Atomic Self-Coordination)\n\n`
+  section += `Agents can atomically claim tickets via the dashboard REST API to avoid conflicts:\n\n`
+  section += `### List available tickets\n`
+  section += `\`\`\`bash\ncurl ${base}/api/board/available\n\`\`\`\n`
+  section += `Returns unassigned tickets in Ready column, sorted by priority (P0 first).\n\n`
+  section += `### Claim a ticket (atomic)\n`
+  section += `\`\`\`bash\ncurl -X POST ${base}/api/board/<ticketId>/claim -H 'Content-Type: application/json' -d '{"agent_name":"<your-name>"}'\n\`\`\`\n`
+  section += `Returns 200 if claimed, 409 if another agent already claimed it. Uses SQLite Compare-And-Swap — safe under concurrency.\n\n`
+  section += `### Release a ticket\n`
+  section += `\`\`\`bash\ncurl -X POST ${base}/api/board/<ticketId>/release -H 'Content-Type: application/json' -d '{"agent_name":"<your-name>"}'\n\`\`\`\n`
+  section += `Only the current assignee can release. Returns 409 if you are not the assignee.\n\n`
   return section
 }
 
