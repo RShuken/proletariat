@@ -33,6 +33,7 @@ import { tokenTracking } from './0024_token_tracking.js'
 import { ticketRepos } from './0025_ticket_repos.js'
 import { watchdogSettings } from './0026_watchdog_settings.js'
 import { messageQueue } from './0027_message_queue.js'
+import { autoRespondSettings } from './0028_auto_respond_settings.js'
 
 
 /**
@@ -67,4 +68,5 @@ export const ALL_MIGRATIONS: Migration[] = [
   ticketRepos,
   watchdogSettings,
   messageQueue,
+  autoRespondSettings,
 ]
