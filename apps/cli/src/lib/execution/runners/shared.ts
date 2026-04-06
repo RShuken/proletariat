@@ -28,6 +28,7 @@ import {
   DEFAULT_EXECUTION_CONFIG,
   normalizeEnvironment,
 } from '../types.js'
+import { getCurrentUser, USER_SESSION_SEPARATOR } from '../session-utils.js'
 import type { TerminalApp } from '../types.js'
 import { getSetTitleCommands } from '../../terminal.js'
 import { readDevcontainerJson, generateOrchestratorDockerfile, generateEntrypointScript } from '../devcontainer.js'
@@ -68,6 +69,8 @@ export type Runner = (
  * so that `orchestrator status` can find the running session.
  */
 export function buildSessionName(context: ExecutionContext): string {
+  const user = getCurrentUser()
+
   // Orchestrator sessions use HQ-scoped naming for consistency with
   // buildOrchestratorSessionName() used by status/start commands
   if (context.isOrchestrator && context.hqName) {
@@ -79,7 +82,7 @@ export function buildSessionName(context: ExecutionContext): string {
       .replace(/[^a-zA-Z0-9._-]/g, '-')
       .replace(/-+/g, '-')
       .replace(/^-|-$/g, '') || 'main'
-    return `prlt-orchestrator-${safeHqName}-${safeName}`
+    return `${user}${USER_SESSION_SEPARATOR}prlt-orchestrator-${safeHqName}-${safeName}`
   }
 
   const action = (context.actionName || 'work')
@@ -89,7 +92,7 @@ export function buildSessionName(context: ExecutionContext): string {
   const agent = context.agentName || 'agent'
   // Prefer external provider key (e.g. PRLT-1065) over internal PMO ID (TKT-xxx) for session names
   const ticketId = context.externalTicketId || context.ticketId
-  return `${ticketId}-${action}-${agent}`
+  return `${user}${USER_SESSION_SEPARATOR}${ticketId}-${action}-${agent}`
 }
 
 export function buildWindowTitle(context: ExecutionContext): string {

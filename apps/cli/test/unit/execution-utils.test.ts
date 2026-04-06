@@ -15,6 +15,10 @@ import {
   getExecutorPackage,
 } from '../../src/lib/execution/runners.js'
 import type { ExecutionContext, TerminalApp, ExecutorType, PermissionMode } from '../../src/lib/execution/types.js'
+import { getCurrentUser, USER_SESSION_SEPARATOR } from '../../src/lib/execution/session-utils.js'
+
+/** Helper: build expected user-prefixed session name */
+const userPrefix = (name: string) => `${getCurrentUser()}${USER_SESSION_SEPARATOR}${name}`
 
 /**
  * Unit tests for execution utility functions
@@ -90,62 +94,62 @@ describe('Execution Utils', () => {
     it('should build session name with action name', () => {
       const context = makeContext({ actionName: 'implement' })
       const result = buildSessionName(context)
-      expect(result).to.equal('TKT-123-implement-test-agent')
+      expect(result).to.equal(userPrefix('TKT-123-implement-test-agent'))
     })
 
     it('should default action to "work" when not provided', () => {
       const context = makeContext()
       const result = buildSessionName(context)
-      expect(result).to.equal('TKT-123-work-test-agent')
+      expect(result).to.equal(userPrefix('TKT-123-work-test-agent'))
     })
 
     it('should default agent to "agent" when not provided', () => {
       const context = makeContext({ agentName: '' })
       const result = buildSessionName(context)
-      expect(result).to.equal('TKT-123-work-agent')
+      expect(result).to.equal(userPrefix('TKT-123-work-agent'))
     })
 
     it('should replace spaces in action name with hyphens', () => {
       const context = makeContext({ actionName: 'Code Review' })
       const result = buildSessionName(context)
-      expect(result).to.equal('TKT-123-Code-Review-test-agent')
+      expect(result).to.equal(userPrefix('TKT-123-Code-Review-test-agent'))
     })
 
     it('should replace multiple spaces with single hyphen', () => {
       const context = makeContext({ actionName: 'Code   Review' })
       const result = buildSessionName(context)
-      expect(result).to.equal('TKT-123-Code-Review-test-agent')
+      expect(result).to.equal(userPrefix('TKT-123-Code-Review-test-agent'))
     })
 
     it('should handle tabs and other whitespace', () => {
       const context = makeContext({ actionName: 'Code\tReview' })
       const result = buildSessionName(context)
-      expect(result).to.equal('TKT-123-Code-Review-test-agent')
+      expect(result).to.equal(userPrefix('TKT-123-Code-Review-test-agent'))
     })
 
     it('should handle leading and trailing spaces', () => {
       const context = makeContext({ actionName: ' Code Review ' })
       const result = buildSessionName(context)
-      expect(result).to.equal('TKT-123-Code-Review-test-agent')
+      expect(result).to.equal(userPrefix('TKT-123-Code-Review-test-agent'))
     })
 
     // PRLT-1065: Session naming should use external provider key when available
     it('should use externalTicketId for session name when provided', () => {
       const context = makeContext({ externalTicketId: 'PRLT-1065' })
       const result = buildSessionName(context)
-      expect(result).to.equal('PRLT-1065-work-test-agent')
+      expect(result).to.equal(userPrefix('PRLT-1065-work-test-agent'))
     })
 
     it('should use externalTicketId with action name', () => {
       const context = makeContext({ externalTicketId: 'PRLT-1065', actionName: 'implement' })
       const result = buildSessionName(context)
-      expect(result).to.equal('PRLT-1065-implement-test-agent')
+      expect(result).to.equal(userPrefix('PRLT-1065-implement-test-agent'))
     })
 
     it('should fall back to ticketId when externalTicketId is not set', () => {
       const context = makeContext({ externalTicketId: undefined })
       const result = buildSessionName(context)
-      expect(result).to.equal('TKT-123-work-test-agent')
+      expect(result).to.equal(userPrefix('TKT-123-work-test-agent'))
     })
   })
 
