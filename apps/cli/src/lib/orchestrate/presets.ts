@@ -52,6 +52,8 @@ const SHARED_HOOKS: Array<{ event: OrchestrateEvent; action: string; config?: Re
   { event: 'on_ci_failed', action: 'spawn-fix-agent' },
   // Periodic cleanup
   { event: 'on_agent_completed', action: 'gc-sweep' },
+  // Scheduler: auto-start next ready ticket when an agent completes
+  { event: 'on_agent_completed', action: 'schedule-next' },
 ]
 
 /**
@@ -72,6 +74,7 @@ const SAFE_ACTIONS = new Set([
   'rebase-conflicting-prs',
   'spawn-review-agent',
   'gc-sweep',
+  'schedule-next',
 ])
 
 export const PRESETS: Record<PresetName, PresetDefinition> = {
