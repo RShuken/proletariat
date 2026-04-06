@@ -14,7 +14,7 @@ import type { OrchestrateEvent } from '../orchestrate/types.js'
 // =============================================================================
 
 /** Supported notification channel types. */
-export type NotificationProviderType = 'slack' | 'email' | 'sms' | 'terminal' | 'browser_push'
+export type NotificationProviderType = 'slack' | 'email' | 'sms' | 'terminal' | 'browser_push' | 'webhook'
 
 /** All valid provider types. */
 export const NOTIFICATION_PROVIDER_TYPES: NotificationProviderType[] = [
@@ -23,6 +23,7 @@ export const NOTIFICATION_PROVIDER_TYPES: NotificationProviderType[] = [
   'sms',
   'terminal',
   'browser_push',
+  'webhook',
 ]
 
 /** Slack provider configuration. */
@@ -58,6 +59,23 @@ export interface BrowserPushProviderConfig {
   endpoint?: string
 }
 
+/** Webhook payload format presets. */
+export type WebhookFormat = 'generic' | 'slack'
+
+/** All valid webhook format presets. */
+export const WEBHOOK_FORMATS: WebhookFormat[] = ['generic', 'slack']
+
+/** Webhook provider configuration — POST JSON to any URL. */
+export interface WebhookProviderConfig {
+  url: string
+  /** Payload format: 'generic' (raw JSON) or 'slack' (Slack Block Kit). */
+  format: WebhookFormat
+  /** Optional secret for HMAC-SHA256 signature header (X-Webhook-Signature). */
+  secret?: string
+  /** Optional additional headers to send. */
+  headers?: Record<string, string>
+}
+
 /** Union of all provider config shapes. */
 export type ProviderConfig =
   | SlackProviderConfig
@@ -65,6 +83,7 @@ export type ProviderConfig =
   | SmsProviderConfig
   | TerminalProviderConfig
   | BrowserPushProviderConfig
+  | WebhookProviderConfig
 
 // =============================================================================
 // Provider Model

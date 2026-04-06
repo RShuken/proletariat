@@ -12,6 +12,7 @@
  * - browser_push: Placeholder (for prlt web dashboard)
  */
 
+import { createHmac } from 'node:crypto'
 import type {
   NotificationProvider,
   NotificationProviderType,
@@ -21,6 +22,8 @@ import type {
   EmailProviderConfig,
   SmsProviderConfig,
   TerminalProviderConfig,
+  WebhookProviderConfig,
+  WebhookFormat,
 } from './types.js'
 
 // =============================================================================
@@ -277,6 +280,149 @@ const handleBrowserPush: ProviderHandler = async (provider, _context) => {
 }
 
 // =============================================================================
+// Webhook Payload Builders
+// =============================================================================
+
+/**
+ * Build a generic JSON webhook payload.
+ */
+function buildGenericPayload(context: NotificationContext): Record<string, unknown> {
+  return {
+    event: context.event,
+    timestamp: new Date().toISOString(),
+    data: {
+      ticket: context.ticket ?? null,
+      pr: context.pr ?? null,
+      branch: context.branch ?? null,
+      agent: context.agent ?? null,
+      container: context.container ?? null,
+      message: context.message ?? null,
+    },
+  }
+}
+
+/**
+ * Build a Slack Block Kit webhook payload.
+ */
+function buildSlackBlockPayload(context: NotificationContext): Record<string, unknown> {
+  const message = buildMessage(context)
+  const fields: Array<{ type: string; text: string }> = []
+
+  if (context.ticket) fields.push({ type: 'mrkdwn', text: `*Ticket:* ${context.ticket}` })
+  if (context.pr) fields.push({ type: 'mrkdwn', text: `*PR:* #${context.pr}` })
+  if (context.agent) fields.push({ type: 'mrkdwn', text: `*Agent:* ${context.agent}` })
+  if (context.branch) fields.push({ type: 'mrkdwn', text: `*Branch:* ${context.branch}` })
+
+  const blocks: Array<Record<string, unknown>> = [
+    {
+      type: 'header',
+      text: { type: 'plain_text', text: `prlt: ${context.event || 'notification'}`, emoji: true },
+    },
+  ]
+
+  if (context.message) {
+    blocks.push({
+      type: 'section',
+      text: { type: 'mrkdwn', text: context.message },
+    })
+  }
+
+  if (fields.length > 0) {
+    blocks.push({ type: 'section', fields })
+  }
+
+  return { text: message, blocks }
+}
+
+/**
+ * Build webhook payload based on format preset.
+ */
+export function buildWebhookPayload(
+  format: WebhookFormat,
+  context: NotificationContext,
+): Record<string, unknown> {
+  switch (format) {
+    case 'slack':
+      return buildSlackBlockPayload(context)
+    case 'generic':
+    default:
+      return buildGenericPayload(context)
+  }
+}
+
+// =============================================================================
+// Webhook Handler
+// =============================================================================
+
+const handleWebhook: ProviderHandler = async (provider, context) => {
+  const start = Date.now()
+  const config = provider.config as WebhookProviderConfig
+
+  if (!config.url) {
+    return {
+      providerId: provider.id,
+      providerName: provider.name,
+      providerType: provider.type,
+      success: false,
+      error: 'No url configured',
+      durationMs: Date.now() - start,
+    }
+  }
+
+  try {
+    const payload = buildWebhookPayload(config.format || 'generic', context)
+    const body = JSON.stringify(payload)
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'User-Agent': 'prlt-webhook/1.0',
+      ...config.headers,
+    }
+
+    // Add HMAC signature if secret is configured
+    if (config.secret) {
+      const signature = createHmac('sha256', config.secret).update(body).digest('hex')
+      headers['X-Webhook-Signature'] = `sha256=${signature}`
+    }
+
+    const response = await fetch(config.url, {
+      method: 'POST',
+      headers,
+      body,
+      signal: AbortSignal.timeout(10_000),
+    })
+
+    if (!response.ok) {
+      return {
+        providerId: provider.id,
+        providerName: provider.name,
+        providerType: provider.type,
+        success: false,
+        error: `Webhook returned ${response.status}: ${await response.text()}`,
+        durationMs: Date.now() - start,
+      }
+    }
+
+    return {
+      providerId: provider.id,
+      providerName: provider.name,
+      providerType: provider.type,
+      success: true,
+      durationMs: Date.now() - start,
+    }
+  } catch (err) {
+    return {
+      providerId: provider.id,
+      providerName: provider.name,
+      providerType: provider.type,
+      success: false,
+      error: err instanceof Error ? err.message : String(err),
+      durationMs: Date.now() - start,
+    }
+  }
+}
+
+// =============================================================================
 // Handler Registry
 // =============================================================================
 
@@ -286,6 +432,7 @@ const HANDLERS: Record<NotificationProviderType, ProviderHandler> = {
   sms: handleSms,
   terminal: handleTerminal,
   browser_push: handleBrowserPush,
+  webhook: handleWebhook,
 }
 
 // =============================================================================
@@ -329,3 +476,8 @@ export async function dispatchNotifications(
  * Exported for testing and reuse.
  */
 export { buildMessage }
+
+/**
+ * Build a webhook payload for testing and reuse.
+ * Already exported above via named export, re-documented here for clarity.
+ */

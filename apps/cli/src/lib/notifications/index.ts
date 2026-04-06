@@ -21,10 +21,13 @@ export {
   type SmsProviderConfig,
   type TerminalProviderConfig,
   type BrowserPushProviderConfig,
+  type WebhookProviderConfig,
+  type WebhookFormat,
+  NOTIFICATION_PROVIDER_TYPES,
+  WEBHOOK_FORMATS,
   type NotificationEvent,
   type EscalationStep,
   type ActiveEscalation,
-  NOTIFICATION_PROVIDER_TYPES,
 } from './types.js'
 
 // Storage
@@ -35,6 +38,7 @@ export {
   dispatchNotification,
   dispatchNotifications,
   buildMessage,
+  buildWebhookPayload,
 } from './dispatcher.js'
 
 // Manager

@@ -19,7 +19,7 @@ import {
   createMetadata,
 } from '../../lib/prompt-json.js'
 import { styles } from '../../lib/styles.js'
-import { NotificationStorage, NOTIFICATION_PROVIDER_TYPES, type NotificationProviderType, type ProviderConfig } from '../../lib/notifications/index.js'
+import { NotificationStorage, NOTIFICATION_PROVIDER_TYPES, WEBHOOK_FORMATS, type NotificationProviderType, type ProviderConfig, type WebhookFormat } from '../../lib/notifications/index.js'
 
 export default class NotifyConnect extends RuntimeCommand {
   static description = 'Connect a notification provider (Slack, Email, SMS, etc.)'
@@ -30,6 +30,7 @@ export default class NotifyConnect extends RuntimeCommand {
     '<%= config.bin %> notify connect sms --account-sid AC... --auth-token ... --from +1234567890 --to +0987654321',
     '<%= config.bin %> notify connect terminal',
     '<%= config.bin %> notify connect slack --name my-slack --webhook-url https://...',
+    '<%= config.bin %> notify connect webhook --url https://example.com/webhook --format slack',
   ]
 
   static args = {
@@ -76,6 +77,17 @@ export default class NotifyConnect extends RuntimeCommand {
     }),
     'auth-token': Flags.string({
       description: 'Twilio auth token',
+    }),
+    // Webhook
+    url: Flags.string({
+      description: 'Webhook URL to POST to',
+    }),
+    format: Flags.string({
+      description: 'Webhook payload format (generic or slack)',
+      options: WEBHOOK_FORMATS,
+    }),
+    secret: Flags.string({
+      description: 'HMAC-SHA256 signing secret for webhook',
     }),
   }
 
@@ -147,6 +159,23 @@ export default class NotifyConnect extends RuntimeCommand {
 
       case 'browser_push': {
         config = {}
+        break
+      }
+
+      case 'webhook': {
+        const webhookUrl = flags.url || flags['webhook-url']
+        if (!webhookUrl) {
+          if (jsonMode) {
+            outputErrorAsJson('MISSING_WEBHOOK_URL', 'Webhook requires --url', createMetadata('notify connect', flags))
+            return
+          }
+          this.error('Webhook requires --url')
+        }
+        config = {
+          url: webhookUrl!,
+          format: (flags.format as WebhookFormat) || 'generic',
+          ...(flags.secret ? { secret: flags.secret } : {}),
+        }
         break
       }
 

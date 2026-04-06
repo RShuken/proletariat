@@ -35,6 +35,7 @@ export type OrchestrateEvent =
   | 'on_agent_died'
   | 'on_agent_completed'
   | 'on_agent_idle'
+  | 'on_agent_needs_input'
   | 'on_review_approved'
   | 'on_changes_requested'
   | 'on_version_published'
@@ -59,6 +60,7 @@ export const ORCHESTRATE_EVENTS: OrchestrateEvent[] = [
   'on_agent_died',
   'on_agent_completed',
   'on_agent_idle',
+  'on_agent_needs_input',
   'on_review_approved',
   'on_changes_requested',
   'on_version_published',

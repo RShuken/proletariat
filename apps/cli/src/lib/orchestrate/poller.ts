@@ -193,6 +193,9 @@ export class OrchestratePoller {
         } else if (currentState === 'idle') {
           this.log(`[poll] Agent idle: ${agent.agent_name} (${agent.ticket_id})`)
           await this.engine.fireEvent('on_agent_idle', { ...ctx, event: 'on_agent_idle' })
+        } else if (currentState === 'needs_input') {
+          this.log(`[poll] Agent needs input: ${agent.agent_name} (${agent.ticket_id})`)
+          await this.engine.fireEvent('on_agent_needs_input', { ...ctx, event: 'on_agent_needs_input' })
         }
       }
 
