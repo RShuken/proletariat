@@ -15,6 +15,10 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { McpToolContext } from '../../types.js'
 import { tmuxOverrideNames, registerTmuxOverrides } from './tmux.js'
 import { workStartOverrideNames, registerWorkStartOverride } from './work-start.js'
+import { registerMessagingTools } from '../messaging.js'
+
+/** Tool names registered by the messaging module (prevents auto-gen collisions). */
+const messagingToolNames = ['agent_send_message', 'agent_broadcast_message', 'agent_check_messages']
 
 /**
  * Set of tool names that have manual overrides.
@@ -23,6 +27,7 @@ import { workStartOverrideNames, registerWorkStartOverride } from './work-start.
 export const overrideToolNames: Set<string> = new Set([
   ...tmuxOverrideNames,
   ...workStartOverrideNames,
+  ...messagingToolNames,
 ])
 
 /**
@@ -31,4 +36,5 @@ export const overrideToolNames: Set<string> = new Set([
 export function registerOverrideTools(server: McpServer, ctx: McpToolContext): void {
   registerTmuxOverrides(server, ctx)
   registerWorkStartOverride(server, ctx)
+  registerMessagingTools(server, ctx)
 }

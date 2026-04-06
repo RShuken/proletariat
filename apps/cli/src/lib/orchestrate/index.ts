@@ -63,3 +63,6 @@ export type { SchedulerOptions } from './scheduler.js'
 
 export { AgentWatchdog, readWatchdogConfig, WATCHDOG_SETTINGS } from './agent-watchdog.js'
 export type { AgentWatchdogOptions, AgentWatchdogCycleResult, WatchdogAction } from './agent-watchdog.js'
+
+export { MessageDelivery, MESSAGE_DELIVERY_INTERVAL_MS } from './message-delivery.js'
+export type { MessageDeliveryOptions } from './message-delivery.js'

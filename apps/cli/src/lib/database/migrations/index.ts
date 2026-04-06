@@ -30,11 +30,10 @@ import { notificationSystem } from './0021_notification_system.js'
 import { hookModeTiers } from './0022_hook_mode_tiers.js'
 import { webhookProvider } from './0023_webhook_provider.js'
 import { tokenTracking } from './0024_token_tracking.js'
-<<<<<<< HEAD
 import { ticketRepos } from './0025_ticket_repos.js'
-=======
-import { watchdogSettings } from './0025_watchdog_settings.js'
->>>>>>> feat/tkt-018-watchdog
+import { watchdogSettings } from './0026_watchdog_settings.js'
+import { messageQueue } from './0027_message_queue.js'
+
 
 /**
  * Ordered list of all migrations.
@@ -65,9 +64,7 @@ export const ALL_MIGRATIONS: Migration[] = [
   hookModeTiers,
   webhookProvider,
   tokenTracking,
-<<<<<<< HEAD
   ticketRepos,
-=======
   watchdogSettings,
->>>>>>> feat/tkt-018-watchdog
+  messageQueue,
 ]

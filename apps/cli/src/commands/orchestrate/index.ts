@@ -30,6 +30,8 @@ import {
   SCHEDULER_POLL_INTERVAL_MS,
   AgentWatchdog,
   readWatchdogConfig,
+  MessageDelivery,
+  MESSAGE_DELIVERY_INTERVAL_MS,
   loadHooksYaml,
   loadWorkflowYaml,
   syncHooksFromYaml,
@@ -304,8 +306,19 @@ export default class Orchestrate extends PromptCommand {
         void scheduler.tryScheduleNext()
       }, SCHEDULER_POLL_INTERVAL_MS)
 
+      // Set up message delivery — polls message_queue every 5s and delivers
+      // pending messages to agent tmux sessions via send-keys
+      const messageDelivery = new MessageDelivery({
+        workspacePath: workspaceInfo.path,
+        log: (msg) => { if (verbose) this.log(styles.muted(`  [msg] ${msg}`)) },
+      })
+      const messageDeliveryTimer = setInterval(() => {
+        void messageDelivery.deliverPending()
+      }, MESSAGE_DELIVERY_INTERVAL_MS)
+
       if (!jsonMode) {
         this.log(styles.muted(`  Scheduler active — polling every 30s, max ${scheduler.getMaxAgents()} agents`))
+        this.log(styles.muted(`  Message delivery active — polling every 5s`))
       }
 
       // Set up the agent watchdog — monitors running sessions for health issues
@@ -357,6 +370,7 @@ export default class Orchestrate extends PromptCommand {
           scheduler.stop()
           clearInterval(schedulerTimer)
           if (watchdogTimer) clearInterval(watchdogTimer)
+          clearInterval(messageDeliveryTimer)
           if (pollTimer) clearInterval(pollTimer)
           if (rl) { rl.close(); rl = null }
           this.log(styles.muted('\n  Orchestrate daemon stopped'))
