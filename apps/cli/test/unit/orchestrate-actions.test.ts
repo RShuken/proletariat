@@ -29,6 +29,7 @@ describe('Orchestrate Built-in Actions', () => {
       'spawn-fix-agent',
       'spawn-review-agent',
       'health-check',
+      'schedule-next',
       'resolve-conflict',
       'gc-sweep',
     ]

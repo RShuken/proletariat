@@ -44,6 +44,7 @@ function createTestDb(): Database.Database {
       title TEXT NOT NULL,
       status_id TEXT NOT NULL,
       assignee TEXT,
+      priority TEXT,
       FOREIGN KEY (status_id) REFERENCES pmo_workflow_statuses(id)
     )
   `)
