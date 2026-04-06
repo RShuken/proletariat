@@ -26,6 +26,8 @@ import {
 import {
   OrchestrateEngine,
   OrchestratePoller,
+  TicketScheduler,
+  SCHEDULER_POLL_INTERVAL_MS,
   loadHooksYaml,
   loadWorkflowYaml,
   syncHooksFromYaml,
@@ -285,6 +287,23 @@ export default class Orchestrate extends PromptCommand {
         }
       }
 
+      // Set up the ticket scheduler — runs on a 30-second loop and
+      // listens for agent completion events to auto-start the next ticket
+      const scheduler = new TicketScheduler({
+        engine,
+        db,
+        log: (msg) => { if (verbose) this.log(styles.muted(msg)) },
+      })
+      scheduler.start()
+      const schedulerTimer = setInterval(() => {
+        scheduler.clearScheduledTickets()
+        void scheduler.tryScheduleNext()
+      }, SCHEDULER_POLL_INTERVAL_MS)
+
+      if (!jsonMode) {
+        this.log(styles.muted(`  Scheduler active — polling every 30s, max ${scheduler.getMaxAgents()} agents`))
+      }
+
       // Keep Node.js event loop alive — signal listeners alone don't prevent exit
       const keepAlive = setInterval(() => {}, 60_000)
 
@@ -295,6 +314,8 @@ export default class Orchestrate extends PromptCommand {
           daemonRunning = false
           process.exit = originalExit
           engine.stop()
+          scheduler.stop()
+          clearInterval(schedulerTimer)
           if (pollTimer) clearInterval(pollTimer)
           if (rl) { rl.close(); rl = null }
           this.log(styles.muted('\n  Orchestrate daemon stopped'))

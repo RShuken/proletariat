@@ -19,6 +19,7 @@ import { runSyncCycle, type SyncReport } from '../sync/engine.js'
 import { SQLiteStorage } from '../pmo/storage-sqlite.js'
 import type { OrchestrateEngine } from './engine.js'
 import { getWorkflowConfig } from '../work-lifecycle/settings.js'
+import { priorityRank } from './scheduler.js'
 
 // =============================================================================
 // Types
@@ -104,7 +105,7 @@ export class OrchestratePoller {
 
       const readyTickets = readyStatusName
         ? this.db.prepare(`
-            SELECT t.id, t.title
+            SELECT t.id, t.title, t.priority
             FROM pmo_tickets t
             JOIN pmo_workflow_statuses ws ON t.status_id = ws.id
             WHERE LOWER(ws.name) = LOWER(?)
@@ -113,9 +114,9 @@ export class OrchestratePoller {
                 SELECT ticket_id FROM agent_work WHERE status IN ('starting', 'running')
               )
             LIMIT 10
-          `).all(readyStatusName) as Array<{ id: string; title: string }>
+          `).all(readyStatusName) as Array<{ id: string; title: string; priority: string | null }>
         : this.db.prepare(`
-            SELECT t.id, t.title
+            SELECT t.id, t.title, t.priority
             FROM pmo_tickets t
             JOIN pmo_workflow_statuses ws ON t.status_id = ws.id
             WHERE ws.category = 'unstarted'
@@ -124,7 +125,10 @@ export class OrchestratePoller {
                 SELECT ticket_id FROM agent_work WHERE status IN ('starting', 'running')
               )
             LIMIT 10
-          `).all() as Array<{ id: string; title: string }>
+          `).all() as Array<{ id: string; title: string; priority: string | null }>
+
+      // Sort by priority (P1 before P2 before P3)
+      readyTickets.sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority))
 
       for (const ticket of readyTickets) {
         if (this.firedReadyTickets.has(ticket.id)) continue

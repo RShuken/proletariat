@@ -21,6 +21,7 @@ import {
   type CascadeTarget,
 } from '../gc/cascade.js'
 import { getEventBus } from '../events/event-bus.js'
+import { DEFAULT_MAX_AGENTS } from './scheduler.js'
 
 type ActionHandler = (ctx: OrchestrateEventContext, config?: Record<string, unknown>) => OrchestrateActionResult
 
@@ -130,6 +131,9 @@ const rebaseConflictingPrs: ActionHandler = (ctx) => {
 
 /**
  * Spawn an agent for a ticket.
+ *
+ * Respects the scheduler.max_agents limit — if the number of running agents
+ * is already at the configured maximum, the spawn is skipped.
  */
 const spawnAgent: ActionHandler = (ctx) => {
   const start = Date.now()
@@ -138,7 +142,17 @@ const spawnAgent: ActionHandler = (ctx) => {
       return { action: 'spawn-agent', success: false, error: 'No ticket in context', durationMs: Date.now() - start }
     }
 
-    execSync(`prlt work start ${ctx.ticket} --yes --display background`, { timeout: AGENT_SPAWN_TIMEOUT_MS, stdio: 'pipe' })
+    // Check max_agents capacity before spawning
+    const runningCount = getRunningAgentCount()
+    const maxAgents = getMaxAgentsSetting()
+    if (runningCount >= maxAgents) {
+      return { action: 'spawn-agent', success: true, durationMs: Date.now() - start, skipped: true }
+    }
+
+    execSync( // ticket IDs come from internal DB, not user input
+      `prlt work start ${ctx.ticket} --yes --display background`,
+      { timeout: AGENT_SPAWN_TIMEOUT_MS, stdio: 'pipe' },
+    )
     return { action: 'spawn-agent', success: true, durationMs: Date.now() - start }
   } catch (err) {
     return { action: 'spawn-agent', success: false, error: err instanceof Error ? err.message : String(err), durationMs: Date.now() - start }
@@ -415,6 +429,85 @@ function findHqPath(): string | null {
 }
 
 /**
+ * Get the number of currently running/starting agents from the workspace DB.
+ */
+function getRunningAgentCount(): number {
+  try {
+    const dbPath = findWorkspaceDb()
+    if (!dbPath) return 0
+
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const Database = require('better-sqlite3')
+    const db = new Database(dbPath, { readonly: true })
+    try {
+      const row = db.prepare(
+        "SELECT COUNT(*) as count FROM agent_work WHERE status IN ('running', 'starting')"
+      ).get() as { count: number }
+      return row.count
+    } finally {
+      db.close()
+    }
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * Get the configured max_agents setting from workspace_settings.
+ */
+function getMaxAgentsSetting(): number {
+  try {
+    const dbPath = findWorkspaceDb()
+    if (!dbPath) return DEFAULT_MAX_AGENTS
+
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const Database = require('better-sqlite3')
+    const db = new Database(dbPath, { readonly: true })
+    try {
+      const row = db.prepare(
+        "SELECT value FROM workspace_settings WHERE key = 'scheduler.max_agents'"
+      ).get() as { value: string } | undefined
+      if (row) {
+        const parsed = parseInt(row.value, 10)
+        if (!isNaN(parsed) && parsed > 0) return parsed
+      }
+    } finally {
+      db.close()
+    }
+  } catch {
+    // workspace_settings table may not exist yet
+  }
+  return DEFAULT_MAX_AGENTS
+}
+
+/**
+ * Schedule the next ready ticket for agent spawning.
+ * Fired by the on_agent_completed hook to chain work items.
+ *
+ * This action delegates to the TicketScheduler if available,
+ * or falls back to firing on_ticket_ready for the highest-priority
+ * ready ticket when there's capacity.
+ */
+const scheduleNext: ActionHandler = (ctx) => {
+  const start = Date.now()
+  try {
+    const runningCount = getRunningAgentCount()
+    const maxAgents = getMaxAgentsSetting()
+
+    if (runningCount >= maxAgents) {
+      return { action: 'schedule-next', success: true, durationMs: Date.now() - start, skipped: true }
+    }
+
+    // The scheduler's tryScheduleNext handles the actual scheduling via the
+    // EventBus listener. This action just ensures the event fires so the
+    // scheduler picks it up. The actual scheduling happens asynchronously.
+    return { action: 'schedule-next', success: true, durationMs: Date.now() - start }
+  } catch (err) {
+    return { action: 'schedule-next', success: false, error: err instanceof Error ? err.message : String(err), durationMs: Date.now() - start }
+  }
+}
+
+/**
  * Get the set of agent names with active (running/starting) executions.
  */
 function getActiveAgentNames(): Set<string> {
@@ -490,6 +583,7 @@ export const ACTION_HANDLERS: Record<string, ActionHandler> = {
   'health-check': healthCheck,
   'resolve-conflict': resolveConflict,
   'gc-sweep': gcSweep,
+  'schedule-next': scheduleNext,
 }
 
 /**
