@@ -337,7 +337,7 @@ describe('AgentWatchdog', () => {
   })
 
   describe('context exhaustion', () => {
-    it('sends /compact when context usage exceeds threshold', async () => {
+    it('sends /compact when context usage exceeds 90% threshold', async () => {
       insertExecution(db, {
         id: 'WORK-CTX1',
         sessionId: 'prlt-session-ctx1',
@@ -347,12 +347,12 @@ describe('AgentWatchdog', () => {
       let compactSent = false
       const watchdog = new AgentWatchdog({
         storage,
-        contextThreshold: 0.20,
+        contextThreshold: 0.10,
         deps: fakeDeps({
           getHostTmuxSessionNames: () => ['prlt-session-ctx1'],
           findSessionLogPath: () => '/tmp/fake.jsonl',
           parseSessionTokensSync: () => ({
-            inputTokens: 170_000, outputTokens: 10_000,
+            inputTokens: 185_000, outputTokens: 10_000,
             cacheReadTokens: 0, cacheCreationTokens: 0,
             model: 'claude-sonnet-4-6', estimatedCostUsd: 0.5,
           }),
@@ -376,7 +376,7 @@ describe('AgentWatchdog', () => {
 
       const watchdog = new AgentWatchdog({
         storage,
-        contextThreshold: 0.20,
+        contextThreshold: 0.10,
         deps: fakeDeps({
           getHostTmuxSessionNames: () => ['prlt-session-ctx2'],
           findSessionLogPath: () => '/tmp/fake.jsonl',
@@ -401,7 +401,7 @@ describe('AgentWatchdog', () => {
 
       const watchdog = new AgentWatchdog({
         storage,
-        contextThreshold: 0.20,
+        contextThreshold: 0.10,
         deps: fakeDeps({
           getHostTmuxSessionNames: () => ['prlt-session-opus'],
           findSessionLogPath: () => '/tmp/fake.jsonl',
@@ -427,12 +427,12 @@ describe('AgentWatchdog', () => {
 
       const watchdog = new AgentWatchdog({
         storage,
-        contextThreshold: 0.20,
+        contextThreshold: 0.10,
         deps: fakeDeps({
           getHostTmuxSessionNames: () => ['prlt-session-ctx3'],
           findSessionLogPath: () => '/tmp/fake.jsonl',
           parseSessionTokensSync: () => ({
-            inputTokens: 180_000, outputTokens: 5_000,
+            inputTokens: 185_000, outputTokens: 5_000,
             cacheReadTokens: 0, cacheCreationTokens: 0,
             model: 'claude-sonnet-4-6', estimatedCostUsd: 0.5,
           }),
@@ -576,7 +576,7 @@ describe('readWatchdogConfig', () => {
     expect(config.crashRecovery).to.be.true
     expect(config.stuckDetection).to.be.true
     expect(config.autoPermit).to.be.true
-    expect(config.contextThreshold).to.equal(0.20)
+    expect(config.contextThreshold).to.equal(0.10)
     expect(config.stuckTimeoutSecs).to.equal(300)
   })
 
@@ -601,7 +601,7 @@ describe('readWatchdogConfig', () => {
 
 describe('Migration 0025 — watchdog_settings', () => {
   it('seeds default watchdog settings', async () => {
-    const { watchdogSettings } = await import('../../src/lib/database/migrations/0025_watchdog_settings.js')
+    const { watchdogSettings } = await import('../../src/lib/database/migrations/0026_watchdog_settings.js')
     const db = new Database(':memory:')
     db.exec(`
       CREATE TABLE workspace_settings (
@@ -619,13 +619,13 @@ describe('Migration 0025 — watchdog_settings', () => {
     expect(enabledRow?.value).to.equal('true')
 
     const thresholdRow = rows.find(r => r.key === 'watchdog.context_threshold')
-    expect(thresholdRow?.value).to.equal('0.20')
+    expect(thresholdRow?.value).to.equal('0.10')
 
     db.close()
   })
 
   it('does not overwrite existing settings', async () => {
-    const { watchdogSettings } = await import('../../src/lib/database/migrations/0025_watchdog_settings.js')
+    const { watchdogSettings } = await import('../../src/lib/database/migrations/0026_watchdog_settings.js')
     const db = new Database(':memory:')
     db.exec(`
       CREATE TABLE workspace_settings (
@@ -645,7 +645,7 @@ describe('Migration 0025 — watchdog_settings', () => {
   })
 
   it('skips if workspace_settings table does not exist', async () => {
-    const { watchdogSettings } = await import('../../src/lib/database/migrations/0025_watchdog_settings.js')
+    const { watchdogSettings } = await import('../../src/lib/database/migrations/0026_watchdog_settings.js')
     const db = new Database(':memory:')
 
     // Should not throw

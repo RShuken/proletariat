@@ -28,7 +28,7 @@ export const watchdogSettings: Migration = {
     insert.run('watchdog.crash_recovery', 'true')
     insert.run('watchdog.stuck_detection', 'true')
     insert.run('watchdog.auto_permit', 'true')
-    insert.run('watchdog.context_threshold', '0.20')
+    insert.run('watchdog.context_threshold', '0.10')
     insert.run('watchdog.stuck_timeout_secs', '300')
   },
 }

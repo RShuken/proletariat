@@ -12,6 +12,8 @@ import type { Board, Ticket, Column } from '../pmo/types.js'
 import { getWorkspaceInfo, getAllAgentsStatus, getAgentTmuxSessions } from '../agents/commands.js'
 import type { WorkspaceInfo, AgentStatus } from '../agents/commands.js'
 import { ExecutionStorage } from '../execution/index.js'
+import { calculateContextUsage } from '../execution/context-monitor.js'
+import type { ContextLevel } from '../execution/context-monitor.js'
 import {
   getHostTmuxSessionNames,
   parseSessionName,
@@ -68,6 +70,10 @@ export interface DashboardAgent {
     model: string | null
     estimatedCostUsd: number
   }
+  /** Context window usage percentage (0-100) */
+  contextPercent?: number
+  /** Context usage level: normal, warning, critical */
+  contextLevel?: ContextLevel
 }
 
 export interface DashboardSession {
@@ -175,6 +181,8 @@ export function gatherAgentData(): DashboardAgent[] {
       let currentTicket: string | undefined
       let elapsedSeconds: number | undefined
       let tokenUsage: DashboardAgent['tokenUsage'] | undefined
+      let contextPercent: number | undefined
+      let contextLevel: ContextLevel | undefined
 
       if (executionStorage) {
         try {
@@ -205,6 +213,20 @@ export function gatherAgentData(): DashboardAgent[] {
             // Has tmux session but no running execution — might be waiting for input
             derivedStatus = 'needs-input'
             currentTicket = s.assignedTickets[0]
+          }
+
+          // Calculate context usage from active execution token data
+          if (tokenUsage) {
+            const ctxUsage = calculateContextUsage({
+              inputTokens: tokenUsage.inputTokens,
+              outputTokens: tokenUsage.outputTokens,
+              cacheReadTokens: tokenUsage.cacheReadTokens,
+              cacheCreationTokens: tokenUsage.cacheCreationTokens,
+              model: tokenUsage.model,
+              estimatedCostUsd: tokenUsage.estimatedCostUsd,
+            })
+            contextPercent = ctxUsage.usagePercent
+            contextLevel = ctxUsage.level
           }
 
           // Aggregate token usage across recent executions if not from active
@@ -247,6 +269,8 @@ export function gatherAgentData(): DashboardAgent[] {
         currentTicket,
         elapsedSeconds,
         tokenUsage,
+        contextPercent,
+        contextLevel,
       }
     })
   } catch {

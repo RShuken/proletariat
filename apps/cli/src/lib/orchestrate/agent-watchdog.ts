@@ -36,28 +36,12 @@ import {
 } from '../execution/token-parser.js'
 import { AutoResponder } from './auto-responder.js'
 import type { AutoRespondAction, SessionInfo } from './auto-responder.js'
-
-// =============================================================================
-// Constants
-// =============================================================================
-
-/** Context window sizes by model prefix (tokens). */
-const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
-  'claude-opus-4-6': 1_000_000,
-  'claude-opus-4-5': 1_000_000,
-  'claude-sonnet-4-6': 200_000,
-  'claude-sonnet-4-5': 200_000,
-  'claude-haiku-4-5': 200_000,
-}
-
-/** Default context window if model not recognized. */
-const DEFAULT_CONTEXT_WINDOW = 200_000
-
-/** Threshold: trigger compact when remaining context < this fraction. */
-const CONTEXT_COMPACT_THRESHOLD = 0.20
-
-/** Minimum interval between compact commands for the same session (ms). */
-const COMPACT_COOLDOWN_MS = 5 * 60 * 1000
+import {
+  getContextWindow,
+  CONTEXT_WARNING_THRESHOLD,
+  CONTEXT_COMPACT_THRESHOLD,
+  COMPACT_COOLDOWN_MS,
+} from '../execution/context-monitor.js'
 
 /** Stuck detection: no new output for this many ms triggers a poke. */
 const STUCK_TIMEOUT_MS = 5 * 60 * 1000
@@ -101,7 +85,7 @@ export interface AgentWatchdogOptions {
   autoRecover?: boolean
   /** Stuck timeout in ms (default: 5 min) */
   stuckTimeoutMs?: number
-  /** Context compact threshold 0-1 (default: 0.20) */
+  /** Context compact threshold 0-1 — remaining fraction (default: 0.10 = compact at 90%) */
   contextThreshold?: number
   /** Injectable dependencies for testing */
   deps?: AgentWatchdogDeps
@@ -181,7 +165,7 @@ export class AgentWatchdog {
     this.log = options.log ?? (() => {})
     this.autoRecover = options.autoRecover ?? true
     this.stuckTimeoutMs = options.stuckTimeoutMs ?? STUCK_TIMEOUT_MS
-    this.contextThreshold = options.contextThreshold ?? CONTEXT_COMPACT_THRESHOLD
+    this.contextThreshold = options.contextThreshold ?? (1 - CONTEXT_COMPACT_THRESHOLD)
 
     // Wire up dependencies (real or injected for testing)
     const d = options.deps ?? {}
@@ -290,16 +274,14 @@ export class AgentWatchdog {
 
   /**
    * Check if an agent's context window is nearly exhausted.
-   * If usage exceeds (1 - threshold) of the model's context window,
-   * sends /compact to the tmux session.
+   *
+   * Two thresholds:
+   * - 80% usage: log a warning (no action)
+   * - 90% usage: auto-send /compact to the tmux session
+   *
+   * The contextThreshold option overrides the compact threshold.
    */
   private checkContextExhaustion(exec: AgentWork): WatchdogAction | null {
-    // Cooldown check
-    const lastCompact = this.lastCompactTime.get(exec.id)
-    if (lastCompact && Date.now() - lastCompact < COMPACT_COOLDOWN_MS) {
-      return null
-    }
-
     // Find and parse the JSONL log
     const logPath = this.deps.findSessionLogPath(exec.sessionId!, exec.logPath ? path.dirname(exec.logPath) : undefined)
     if (!logPath) return null
@@ -308,17 +290,35 @@ export class AgentWatchdog {
     const totalInputTokens = tokens.inputTokens + tokens.cacheReadTokens
 
     // Determine context window for this model
-    const contextWindow = this.getContextWindow(tokens.model)
-    const usageRatio = totalInputTokens / contextWindow
-    const remainingRatio = 1 - usageRatio
+    const contextWindow = getContextWindow(tokens.model)
+    const usageRatio = contextWindow > 0 ? totalInputTokens / contextWindow : 0
+    const usagePercent = Math.round(usageRatio * 100)
 
-    if (remainingRatio < this.contextThreshold) {
+    // Determine effective compact threshold (option overrides default)
+    const compactThreshold = this.contextThreshold > 0 && this.contextThreshold < 1
+      ? (1 - this.contextThreshold) // legacy: contextThreshold was "remaining" fraction
+      : CONTEXT_COMPACT_THRESHOLD
+
+    // Warning at 80%
+    if (usageRatio >= CONTEXT_WARNING_THRESHOLD && usageRatio < compactThreshold) {
+      this.log(`[agent-watchdog] Context warning: ${exec.agentName} at ${usagePercent}% (${totalInputTokens}/${contextWindow} tokens)`)
+      return null
+    }
+
+    // Compact at 90% (or custom threshold)
+    if (usageRatio >= compactThreshold) {
+      // Cooldown check
+      const lastCompact = this.lastCompactTime.get(exec.id)
+      if (lastCompact && Date.now() - lastCompact < COMPACT_COOLDOWN_MS) {
+        return null
+      }
+
       // Send /compact command
       try {
         this.deps.sendTmuxMessage(exec.sessionId!, '/compact', undefined)
         this.lastCompactTime.set(exec.id, Date.now())
 
-        const detail = `Context ${Math.round(usageRatio * 100)}% used (${totalInputTokens}/${contextWindow} tokens) — sent /compact`
+        const detail = `Context ${usagePercent}% used (${totalInputTokens}/${contextWindow} tokens) — sent /compact`
         this.logAction('compact', exec, detail)
 
         return {
@@ -335,24 +335,6 @@ export class AgentWatchdog {
     }
 
     return null
-  }
-
-  /**
-   * Get context window size for a model.
-   */
-  private getContextWindow(model: string | null): number {
-    if (!model) return DEFAULT_CONTEXT_WINDOW
-
-    for (const [prefix, size] of Object.entries(MODEL_CONTEXT_WINDOWS)) {
-      if (model.startsWith(prefix) || model.includes(prefix)) return size
-    }
-
-    // Infer from model name
-    if (model.includes('opus')) return 1_000_000
-    if (model.includes('sonnet')) return 200_000
-    if (model.includes('haiku')) return 200_000
-
-    return DEFAULT_CONTEXT_WINDOW
   }
 
   // ===========================================================================
@@ -638,7 +620,7 @@ export const WATCHDOG_SETTINGS = {
   stuckDetection: 'watchdog.stuck_detection',
   /** Enable permission prompt auto-approve (default: true) */
   autoPermit: 'watchdog.auto_permit',
-  /** Context remaining threshold (default: 0.20) */
+  /** Context remaining threshold (default: 0.10 — compact at 90%) */
   contextThreshold: 'watchdog.context_threshold',
   /** Stuck timeout in seconds (default: 300) */
   stuckTimeoutSecs: 'watchdog.stuck_timeout_secs',
@@ -678,7 +660,7 @@ export function readWatchdogConfig(db: WatchdogConfigDb): {
     crashRecovery: getSetting(WATCHDOG_SETTINGS.crashRecovery) !== 'false',
     stuckDetection: getSetting(WATCHDOG_SETTINGS.stuckDetection) !== 'false',
     autoPermit: getSetting(WATCHDOG_SETTINGS.autoPermit) !== 'false',
-    contextThreshold: parseFloat(getSetting(WATCHDOG_SETTINGS.contextThreshold) ?? '0.20'),
+    contextThreshold: parseFloat(getSetting(WATCHDOG_SETTINGS.contextThreshold) ?? '0.10'),
     stuckTimeoutSecs: parseInt(getSetting(WATCHDOG_SETTINGS.stuckTimeoutSecs) ?? '300', 10),
     autoRespondEnabled: getSetting(WATCHDOG_SETTINGS.autoRespondEnabled) !== 'false',
     autoRespondCooldownSecs: parseInt(getSetting(WATCHDOG_SETTINGS.autoRespondCooldownSecs) ?? '10', 10),
