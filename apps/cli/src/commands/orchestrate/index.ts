@@ -28,6 +28,8 @@ import {
   OrchestratePoller,
   TicketScheduler,
   SCHEDULER_POLL_INTERVAL_MS,
+  AgentWatchdog,
+  readWatchdogConfig,
   loadHooksYaml,
   loadWorkflowYaml,
   syncHooksFromYaml,
@@ -35,7 +37,9 @@ import {
   PRESET_NAMES,
 } from '../../lib/orchestrate/index.js'
 import type { PresetName, OrchestrateActionResult } from '../../lib/orchestrate/index.js'
+import { ExecutionStorage } from '../../lib/execution/storage.js'
 import { initWorkLifecycleAdapter } from '../../lib/work-lifecycle/adapter.js'
+import * as path from 'node:path'
 export default class Orchestrate extends PromptCommand {
   static description = 'Start the autonomous pipeline daemon with event-driven hooks'
 
@@ -304,6 +308,42 @@ export default class Orchestrate extends PromptCommand {
         this.log(styles.muted(`  Scheduler active — polling every 30s, max ${scheduler.getMaxAgents()} agents`))
       }
 
+      // Set up the agent watchdog — monitors running sessions for health issues
+      const watchdogConfig = readWatchdogConfig(db)
+      let watchdogTimer: ReturnType<typeof setInterval> | null = null
+
+      if (watchdogConfig.enabled) {
+        const execStorage = new ExecutionStorage(db)
+        const watchdog = new AgentWatchdog({
+          storage: execStorage,
+          autoRecover: watchdogConfig.crashRecovery,
+          stuckTimeoutMs: watchdogConfig.stuckTimeoutSecs * 1000,
+          contextThreshold: watchdogConfig.contextThreshold,
+          log: (msg) => { if (verbose) this.log(styles.muted(msg)) },
+        })
+
+        // Set up dedicated watchdog log
+        const watchdogLogPath = path.join(workspaceInfo.path, '.proletariat', 'watchdog.log')
+        watchdog.setLogFile(watchdogLogPath)
+
+        // Run watchdog every 30 seconds (aligned with scheduler)
+        watchdogTimer = setInterval(() => {
+          void watchdog.runCycle().catch((err) => {
+            if (verbose) this.log(styles.error(`  Watchdog error: ${err instanceof Error ? err.message : String(err)}`))
+          })
+        }, SCHEDULER_POLL_INTERVAL_MS)
+
+        if (!jsonMode) {
+          const features = [
+            watchdogConfig.contextDetection && 'context-compact',
+            watchdogConfig.crashRecovery && 'crash-recovery',
+            watchdogConfig.stuckDetection && 'stuck-detection',
+            watchdogConfig.autoPermit && 'auto-permit',
+          ].filter(Boolean)
+          this.log(styles.muted(`  Watchdog active — ${features.join(', ')}`))
+        }
+      }
+
       // Keep Node.js event loop alive — signal listeners alone don't prevent exit
       const keepAlive = setInterval(() => {}, 60_000)
 
@@ -316,6 +356,7 @@ export default class Orchestrate extends PromptCommand {
           engine.stop()
           scheduler.stop()
           clearInterval(schedulerTimer)
+          if (watchdogTimer) clearInterval(watchdogTimer)
           if (pollTimer) clearInterval(pollTimer)
           if (rl) { rl.close(); rl = null }
           this.log(styles.muted('\n  Orchestrate daemon stopped'))

@@ -60,3 +60,6 @@ export type { SimplePollerOptions, PollChange, PollResult } from './simple-polle
 
 export { TicketScheduler, priorityRank, DEFAULT_MAX_AGENTS, SCHEDULER_POLL_INTERVAL_MS } from './scheduler.js'
 export type { SchedulerOptions } from './scheduler.js'
+
+export { AgentWatchdog, readWatchdogConfig, WATCHDOG_SETTINGS } from './agent-watchdog.js'
+export type { AgentWatchdogOptions, AgentWatchdogCycleResult, WatchdogAction } from './agent-watchdog.js'
