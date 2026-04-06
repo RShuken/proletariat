@@ -1,16 +1,17 @@
 /**
- * Dashboard HTTP Server
+ * Dashboard HTTP + WebSocket Server
  *
- * Serves the dashboard HTML, JSON API, and SSE events.
- * Zero external dependencies — uses Node.js built-in http module.
+ * Serves the dashboard HTML, JSON API, and WebSocket live updates.
+ * WebSocket pushes agent status, board, and tmux peek data every 3 seconds.
  */
 
 import * as http from 'node:http'
+import { WebSocketServer, type WebSocket } from 'ws'
 import { getDashboardHTML } from './html.js'
 import { gatherDashboardData } from './data.js'
 import type { PMOStorage } from '../pmo/types.js'
 
-const SSE_INTERVAL_MS = 4_000
+const WS_BROADCAST_INTERVAL_MS = 3_000
 
 export interface DashboardServerOptions {
   port: number
@@ -27,8 +28,7 @@ export interface DashboardServer {
 
 export function createDashboardServer(options: DashboardServerOptions): Promise<DashboardServer> {
   const { port, storage, projectId, projectName } = options
-  const sseClients = new Set<http.ServerResponse>()
-  let sseInterval: ReturnType<typeof setInterval> | null = null
+  let broadcastInterval: ReturnType<typeof setInterval> | null = null
 
   const html = getDashboardHTML(port)
 
@@ -49,34 +49,10 @@ export function createDashboardServer(options: DashboardServerOptions): Promise<
         const data = await gatherDashboardData(storage, projectId, projectName)
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify(data))
-      } catch (err) {
+      } catch {
         res.writeHead(500, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ error: 'Failed to gather data' }))
       }
-      return
-    }
-
-    if (url === '/api/events') {
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-      })
-
-      // Send initial data
-      try {
-        const data = await gatherDashboardData(storage, projectId, projectName)
-        res.write(`data: ${JSON.stringify(data)}\n\n`)
-      } catch {
-        // Will retry on next interval
-      }
-
-      sseClients.add(res)
-
-      req.on('close', () => {
-        sseClients.delete(res)
-      })
-
       return
     }
 
@@ -85,29 +61,51 @@ export function createDashboardServer(options: DashboardServerOptions): Promise<
     res.end('Not Found')
   })
 
-  // Start SSE broadcast interval
-  sseInterval = setInterval(async () => {
-    if (sseClients.size === 0) return
+  // WebSocket server attached to the HTTP server
+  const wss = new WebSocketServer({ server })
+
+  // Prevent unhandled WSS errors (e.g. during port conflict)
+  wss.on('error', () => { /* handled by server 'error' event */ })
+
+  wss.on('connection', async (ws: WebSocket) => {
+    // Send initial data immediately on connect
+    try {
+      const data = await gatherDashboardData(storage, projectId, projectName)
+      if (ws.readyState === ws.OPEN) {
+        ws.send(JSON.stringify(data))
+      }
+    } catch {
+      // Will get data on next broadcast cycle
+    }
+  })
+
+  // Broadcast to all connected WebSocket clients every 3 seconds
+  broadcastInterval = setInterval(async () => {
+    if (wss.clients.size === 0) return
 
     try {
       const data = await gatherDashboardData(storage, projectId, projectName)
-      const payload = `data: ${JSON.stringify(data)}\n\n`
-      for (const client of sseClients) {
-        try {
-          client.write(payload)
-        } catch {
-          sseClients.delete(client)
+      const payload = JSON.stringify(data)
+      for (const client of wss.clients) {
+        if (client.readyState === client.OPEN) {
+          try {
+            client.send(payload)
+          } catch {
+            // client disconnected mid-send
+          }
         }
       }
     } catch {
       // Data gathering failed, skip this cycle
     }
-  }, SSE_INTERVAL_MS)
+  }, WS_BROADCAST_INTERVAL_MS)
 
   const url = `http://localhost:${port}`
 
   return new Promise<DashboardServer>((resolve, reject) => {
     server.on('error', (err: NodeJS.ErrnoException) => {
+      // Clean up WSS on server error to prevent uncaught exceptions
+      wss.close()
       if (err.code === 'EADDRINUSE') {
         reject(new Error(`Port ${port} is already in use. Try --port <number> to use a different port.`))
       } else {
@@ -121,15 +119,16 @@ export function createDashboardServer(options: DashboardServerOptions): Promise<
         url,
         close: () => {
           return new Promise<void>((resolveClose) => {
-            if (sseInterval) clearInterval(sseInterval)
+            if (broadcastInterval) clearInterval(broadcastInterval)
 
-            // Close all SSE connections
-            for (const client of sseClients) {
-              try { client.end() } catch { /* client may have already disconnected — safe to ignore */ }
+            // Close all WebSocket connections
+            for (const client of wss.clients) {
+              try { client.close() } catch { /* client may have already disconnected */ }
             }
-            sseClients.clear()
 
-            server.close(() => resolveClose())
+            wss.close(() => {
+              server.close(() => resolveClose())
+            })
           })
         },
       })

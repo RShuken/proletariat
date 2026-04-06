@@ -2,7 +2,7 @@
  * Dashboard Data Aggregation
  *
  * Gathers data from board, agents, sessions, and PRs into a unified interface
- * for the web dashboard.
+ * for the web dashboard. Enhanced with token usage tracking and tmux peek.
  */
 
 import * as path from 'node:path'
@@ -19,6 +19,7 @@ import {
   flattenContainerSessions,
   findContainerSessionsByPrefix,
   findSessionForExecution,
+  captureTmuxPane,
 } from '../execution/session-utils.js'
 import { listOpenPRs } from '../pr/index.js'
 import type { PRInfo } from '../pr/index.js'
@@ -52,6 +53,21 @@ export interface DashboardAgent {
   assignedTickets: string[]
   completedTickets: string[]
   hasActiveSessions: boolean
+  /** Derived status: working, idle, needs-input, error */
+  derivedStatus: 'working' | 'idle' | 'needs-input' | 'error'
+  /** Current ticket being worked on (most recent running execution) */
+  currentTicket?: string
+  /** Elapsed time in seconds since execution started */
+  elapsedSeconds?: number
+  /** Token usage from execution tracking */
+  tokenUsage?: {
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens: number
+    cacheCreationTokens: number
+    model: string | null
+    estimatedCostUsd: number
+  }
 }
 
 export interface DashboardSession {
@@ -61,6 +77,7 @@ export interface DashboardSession {
   status: string
   environment: 'host' | 'container'
   source: 'db' | 'discovered'
+  containerId?: string
 }
 
 export interface DashboardPR {
@@ -70,6 +87,13 @@ export interface DashboardPR {
   headBranch: string
   isDraft: boolean
   ciStatus?: 'success' | 'failure' | 'pending' | 'unknown'
+}
+
+/** Tmux pane peek: last N lines of output for a session */
+export interface TmuxPeek {
+  sessionId: string
+  agentName: string
+  lines: string[]
 }
 
 export interface DashboardData {
@@ -82,6 +106,7 @@ export interface DashboardData {
   agents: DashboardAgent[]
   sessions: DashboardSession[]
   prs: DashboardPR[]
+  tmuxPeeks: TmuxPeek[]
 }
 
 // =============================================================================
@@ -122,6 +147,18 @@ export async function gatherBoardData(
 }
 
 export function gatherAgentData(): DashboardAgent[] {
+  let executionStorage: ExecutionStorage | null = null
+  let db: DatabaseDriver | null = null
+
+  try {
+    const workspaceInfo: WorkspaceInfo = getWorkspaceInfo()
+    const dbPath = path.join(workspaceInfo.path, '.proletariat', 'workspace.db')
+    db = openDriver(dbPath, { foreignKeys: false })
+    executionStorage = new ExecutionStorage(db)
+  } catch {
+    // workspace DB unavailable
+  }
+
   try {
     const workspaceInfo: WorkspaceInfo = getWorkspaceInfo()
     const statuses: AgentStatus[] = getAllAgentsStatus(workspaceInfo)
@@ -132,6 +169,73 @@ export function gatherAgentData(): DashboardAgent[] {
       } catch {
         // tmux not available
       }
+
+      // Determine derived status and token usage from executions
+      let derivedStatus: DashboardAgent['derivedStatus'] = 'idle'
+      let currentTicket: string | undefined
+      let elapsedSeconds: number | undefined
+      let tokenUsage: DashboardAgent['tokenUsage'] | undefined
+
+      if (executionStorage) {
+        try {
+          const running = executionStorage.listExecutions({ agentName: s.name, status: 'running' })
+          const starting = executionStorage.listExecutions({ agentName: s.name, status: 'starting' })
+          const errored = executionStorage.listExecutions({ agentName: s.name, status: 'failed' })
+          const active = [...running, ...starting]
+
+          if (active.length > 0) {
+            const exec = active[0]
+            derivedStatus = 'working'
+            currentTicket = exec.ticketId
+            elapsedSeconds = Math.floor((Date.now() - exec.startedAt.getTime()) / 1000)
+            if (exec.inputTokens || exec.outputTokens) {
+              tokenUsage = {
+                inputTokens: exec.inputTokens ?? 0,
+                outputTokens: exec.outputTokens ?? 0,
+                cacheReadTokens: exec.cacheReadTokens ?? 0,
+                cacheCreationTokens: exec.cacheCreationTokens ?? 0,
+                model: exec.model ?? null,
+                estimatedCostUsd: exec.estimatedCostUsd ?? 0,
+              }
+            }
+          } else if (errored.length > 0 && (!errored[0].completedAt || Date.now() - errored[0].completedAt.getTime() < 300_000)) {
+            derivedStatus = 'error'
+            currentTicket = errored[0].ticketId
+          } else if (hasActiveSessions && s.assignedTickets.length > 0) {
+            // Has tmux session but no running execution — might be waiting for input
+            derivedStatus = 'needs-input'
+            currentTicket = s.assignedTickets[0]
+          }
+
+          // Aggregate token usage across recent executions if not from active
+          if (!tokenUsage) {
+            const recent = executionStorage.listExecutions({ agentName: s.name, limit: 10 })
+            let totalInput = 0, totalOutput = 0, totalCacheRead = 0, totalCacheCreation = 0, totalCost = 0
+            let lastModel: string | null = null
+            for (const exec of recent) {
+              totalInput += exec.inputTokens ?? 0
+              totalOutput += exec.outputTokens ?? 0
+              totalCacheRead += exec.cacheReadTokens ?? 0
+              totalCacheCreation += exec.cacheCreationTokens ?? 0
+              totalCost += exec.estimatedCostUsd ?? 0
+              if (exec.model) lastModel = exec.model
+            }
+            if (totalInput > 0 || totalOutput > 0) {
+              tokenUsage = {
+                inputTokens: totalInput,
+                outputTokens: totalOutput,
+                cacheReadTokens: totalCacheRead,
+                cacheCreationTokens: totalCacheCreation,
+                model: lastModel,
+                estimatedCostUsd: totalCost,
+              }
+            }
+          }
+        } catch {
+          // execution query failed
+        }
+      }
+
       return {
         name: s.name,
         exists: s.exists,
@@ -139,10 +243,16 @@ export function gatherAgentData(): DashboardAgent[] {
         assignedTickets: s.assignedTickets,
         completedTickets: s.completedTickets,
         hasActiveSessions,
+        derivedStatus,
+        currentTicket,
+        elapsedSeconds,
+        tokenUsage,
       }
     })
   } catch {
     return []
+  } finally {
+    db?.close()
   }
 }
 
@@ -216,6 +326,7 @@ export function gatherSessionData(): DashboardSession[] {
           status: exec.status,
           environment: isContainer ? 'container' : 'host',
           source: 'db',
+          containerId: isContainer ? exec.containerId : undefined,
         })
       }
     }
@@ -322,6 +433,32 @@ export function gatherPRData(): DashboardPR[] {
   }
 }
 
+const TMUX_PEEK_LINES = 20
+
+/**
+ * Capture last N lines of tmux output for each active session.
+ * Returns one TmuxPeek per session that has a live tmux pane.
+ */
+export function gatherTmuxPeeks(sessions: DashboardSession[]): TmuxPeek[] {
+  const peeks: TmuxPeek[] = []
+  for (const s of sessions) {
+    if (s.status !== 'running' && s.status !== 'starting') continue
+    try {
+      const output = captureTmuxPane(s.sessionId, TMUX_PEEK_LINES, s.containerId)
+      if (output !== null) {
+        peeks.push({
+          sessionId: s.sessionId,
+          agentName: s.agentName,
+          lines: output.split('\n').slice(-TMUX_PEEK_LINES),
+        })
+      }
+    } catch {
+      // tmux capture failed — skip
+    }
+  }
+  return peeks
+}
+
 export async function gatherDashboardData(
   storage: PMOStorage,
   projectId: string,
@@ -334,6 +471,8 @@ export async function gatherDashboardData(
     Promise.resolve(gatherPRData()),
   ])
 
+  const tmuxPeeks = gatherTmuxPeeks(sessions)
+
   return {
     projectId,
     projectName,
@@ -342,5 +481,6 @@ export async function gatherDashboardData(
     agents,
     sessions,
     prs,
+    tmuxPeeks,
   }
 }
