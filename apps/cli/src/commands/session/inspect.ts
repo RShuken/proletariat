@@ -13,6 +13,8 @@ import {
   findSessionForExecution,
   captureTmuxPane,
 } from '../../lib/execution/session-utils.js'
+import { getContextUsage, formatContextPercent } from '../../lib/execution/context-monitor.js'
+import type { ContextUsage } from '../../lib/execution/context-monitor.js'
 import { PromptCommand } from '../../lib/prompt-command.js'
 import { machineOutputFlags } from '../../lib/pmo/index.js'
 import {
@@ -75,6 +77,12 @@ interface InspectResult {
     cacheCreationTokens: number
     model: string | null
     estimatedCostUsd: number
+  } | null
+  context: {
+    usagePercent: number
+    level: string
+    contextWindow: number
+    totalInputTokens: number
   } | null
 }
 
@@ -341,6 +349,13 @@ export default class SessionInspect extends PromptCommand {
       const gitInfo = getGitInfo(worktreePath, containerId)
       const prInfo = gitInfo?.branch ? getPrInfo(gitInfo.branch, containerId) : null
 
+      // Get live context usage from JSONL log
+      let contextUsage: ContextUsage | null = null
+      if (actualSessionId) {
+        const logCwd = match.logPath ? path.dirname(match.logPath) : undefined
+        contextUsage = getContextUsage(actualSessionId, logCwd)
+      }
+
       const result: InspectResult = {
         agent: {
           name: match.agentName,
@@ -380,6 +395,12 @@ export default class SessionInspect extends PromptCommand {
           cacheCreationTokens: match.cacheCreationTokens || 0,
           model: match.model || null,
           estimatedCostUsd: match.estimatedCostUsd || 0,
+        } : null,
+        context: contextUsage ? {
+          usagePercent: contextUsage.usagePercent,
+          level: contextUsage.level,
+          contextWindow: contextUsage.contextWindow,
+          totalInputTokens: contextUsage.totalInputTokens,
         } : null,
       }
 
@@ -443,6 +464,18 @@ export default class SessionInspect extends PromptCommand {
           this.log(`    Model:        ${result.tokens.model}`)
         }
         this.log(`    Est. cost:    ${formatCost(result.tokens.estimatedCostUsd)}`)
+      }
+
+      // Context usage
+      if (contextUsage) {
+        this.log('')
+        this.log(styles.info('  Context Window'))
+        const levelColor = contextUsage.level === 'critical' ? styles.error
+          : contextUsage.level === 'warning' ? styles.warning
+          : styles.success
+        this.log(`    Usage:        ${levelColor(formatContextPercent(contextUsage))}`)
+        this.log(`    Window:       ${formatTokenCount(contextUsage.contextWindow)} tokens`)
+        this.log(`    Used:         ${formatTokenCount(contextUsage.totalInputTokens)} tokens`)
       }
 
       // Last output

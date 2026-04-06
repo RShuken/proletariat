@@ -26,6 +26,8 @@ import {
   captureTmuxPane,
   parseSessionName,
 } from '../lib/execution/session-utils.js'
+import { getContextUsage } from '../lib/execution/context-monitor.js'
+import type { ContextLevel } from '../lib/execution/context-monitor.js'
 
 // =============================================================================
 // Helpers (exported for testing)
@@ -96,6 +98,8 @@ export interface AgentSnapshot {
   gitStatus: GitStatus | null
   sessionName: string
   workdir: string
+  contextPercent: number | null
+  contextLevel: ContextLevel | null
 }
 
 export function buildAgentSnapshot(
@@ -113,6 +117,19 @@ export function buildAgentSnapshot(
   // Get git status for the workdir
   const gitStatus = getGitStatus(session.workdir)
 
+  // Get context usage from JSONL log
+  let contextPercent: number | null = null
+  let contextLevel: ContextLevel | null = null
+  try {
+    const ctxUsage = getContextUsage(session.sessionName, session.workdir)
+    if (ctxUsage) {
+      contextPercent = ctxUsage.usagePercent
+      contextLevel = ctxUsage.level
+    }
+  } catch {
+    // Context usage unavailable
+  }
+
   return {
     agentName: session.agentName,
     ticketId: parsed?.ticketId,
@@ -126,6 +143,8 @@ export function buildAgentSnapshot(
     gitStatus,
     sessionName: session.sessionName,
     workdir: session.workdir,
+    contextPercent,
+    contextLevel,
   }
 }
 
@@ -172,12 +191,22 @@ export function renderDashboard(snapshots: AgentSnapshot[]): string {
           : styles.success(' [clean]'))
       : ''
 
+    // Context usage label
+    const ctxLabel = snap.contextPercent !== null
+      ? styles.muted('  ctx: ') + (
+          snap.contextLevel === 'critical' ? styles.error(`${snap.contextPercent}%`)
+          : snap.contextLevel === 'warning' ? styles.warning(`${snap.contextPercent}%`)
+          : styles.success(`${snap.contextPercent}%`)
+        )
+      : ''
+
     lines.push(
       '  ' + ticketLabel +
       styles.emphasis(snap.agentName) +
       styles.muted(' (' + snap.runner + ')') +
       '  ' + statusColor(snap.status) +
       styles.muted('  uptime: ') + snap.uptime +
+      ctxLabel +
       gitLabel
     )
 
@@ -268,6 +297,8 @@ export default class Monitor extends PromptCommand {
               gitUncommitted: s.gitStatus?.uncommitted,
               sessionName: s.sessionName,
               workdir: s.workdir,
+              contextPercent: s.contextPercent,
+              contextLevel: s.contextLevel,
             })),
           }, createMetadata('monitor', flags))
           return
