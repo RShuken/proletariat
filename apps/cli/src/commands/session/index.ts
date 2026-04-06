@@ -43,6 +43,7 @@ export default class Session extends PromptCommand {
         { name: 'Watch agent heartbeats', value: 'watch', command: 'prlt session watch --json' },
         { name: 'Prune stale sessions', value: 'prune', command: 'prlt session prune --json' },
         { name: 'Clean up completed containers', value: 'cleanup', command: 'prlt session cleanup --json' },
+        { name: 'Fork agent session to new branch', value: 'fork', command: 'prlt session fork --json' },
         { name: 'Report agent session event', value: 'report', command: 'prlt session report --json' },
         { name: 'Cancel', value: 'cancel' },
       ],
@@ -89,6 +90,9 @@ export default class Session extends PromptCommand {
         break
       case 'cleanup':
         await this.config.runCommand('session:cleanup', [])
+        break
+      case 'fork':
+        await this.config.runCommand('session:fork', [])
         break
       case 'report':
         await this.config.runCommand('session:report', [])
