@@ -12,6 +12,8 @@ import {
   createMetadata,
 } from '../../lib/prompt-json.js';
 import { formatTicket } from '../../lib/mcp/helpers.js';
+import { cleanupTicketWorktrees } from '../../lib/gc/index.js';
+import { getWorkspaceInfo } from '../../lib/agents/commands.js';
 
 export default class TicketMove extends PMOCommand {
   static description = 'Move ticket(s) to a different column';
@@ -272,6 +274,23 @@ export default class TicketMove extends PMOCommand {
     // Refresh ticket to get updated status from provider
     const refreshResult = await provider.getTicket(ticketId!);
     const moved = (refreshResult.success && refreshResult.ticket) ? refreshResult.ticket : ticket;
+
+    // Auto-cleanup worktrees when ticket moves to Done/completed
+    if (moved.statusCategory === 'completed' && ticket.statusCategory !== 'completed') {
+      try {
+        const workspaceInfo = getWorkspaceInfo()
+        const cleanupResult = cleanupTicketWorktrees(
+          ticketId!,
+          workspaceInfo.path,
+          jsonMode ? undefined : (msg) => this.log(styles.muted(`  🧹 ${msg}`)),
+        )
+        if (!jsonMode && cleanupResult.worktreesRemoved.length > 0) {
+          this.log(styles.muted(`  🧹 Cleaned ${cleanupResult.worktreesRemoved.length} worktree(s) for ${cleanupResult.agentsCleaned.length} agent(s)`))
+        }
+      } catch {
+        // Cleanup failure is non-fatal — don't block the move
+      }
+    }
 
     // Auto-export to board.md only for local PMO provider
     if (provider.name === 'pmo') {
