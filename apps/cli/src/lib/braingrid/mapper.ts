@@ -26,6 +26,11 @@ export function mapRequirementToTicket(req: BrainGridRequirement): CreateTicketI
     '```',
     `braingrid task list --requirement ${key} --format markdown`,
     '```',
+    '',
+    '## Definition of done (QA-ready)',
+    '- If this adds or changes UI, **wire it into a reachable route** (or a `/dev/...` test route). An orphaned component cannot be human-tested.',
+    '- In the **PR body, include a test plan**: what to verify, how to reach it in the running app, and what a passing result looks like.',
+    '- Apply any new DB migrations against local Supabase.',
   ].filter(Boolean).join('\n')
 
   return {

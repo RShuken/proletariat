@@ -37,7 +37,8 @@ describe('mapRequirementToTicket', () => {
     const fat = makeReq({ name: 'X' }) as BrainGridRequirement & { description: string };
     fat.description = 'a'.repeat(8000);
     const out = mapRequirementToTicket(fat);
-    expect((out.description ?? '').length).to.be.lessThan(700);
+    // thin = no full spec duplication (instructions/DoD are fine); the real spec is thousands of chars
+    expect((out.description ?? '').length).to.be.lessThan(1200);
   });
 
   it('tags the ticket with source/braingrid and bg/<key> labels', () => {
