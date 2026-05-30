@@ -1297,8 +1297,8 @@ export default class WorkSpawn extends PMOCommand {
         const unblockedCandidates: Ticket[] = []
         let skippedBlocked = 0
         for (const ticket of candidates) {
-          // eslint-disable-next-line no-await-in-loop -- Sequential dependency check
-          const blocked = await this.storage.isTicketBlocked(ticket.id)
+          // isTicketBlocked is a dead PRLT-1299 stub; read the provider-populated field instead
+          const blocked = Boolean(ticket.blockedBy && ticket.blockedBy.length > 0)
           if (blocked) {
             skippedBlocked++
           } else {

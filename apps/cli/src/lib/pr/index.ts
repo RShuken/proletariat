@@ -415,9 +415,8 @@ export function createPR(options: CreatePROptions): CreatePRResult {
 
   const args = ['pr', 'create', '--title', title];
 
-  if (body) {
-    args.push('--body', body);
-  }
+  // Always pass --body (fall back to title) so non-interactive `gh` never opens an editor/prompt and hangs an agent
+  args.push('--body', body || title);
 
   if (base) {
     args.push('--base', base);

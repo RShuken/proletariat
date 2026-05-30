@@ -184,9 +184,8 @@ export default class Pull extends PMOCommand {
     for (const ticket of backlogTickets) {
       if (pulled.length >= targetCount) break
 
-      // Check if blocked (all blocking dependencies must be completed/canceled)
-      // eslint-disable-next-line no-await-in-loop -- Need sequential dependency check
-      const blocked = await this.storage.isTicketBlocked(ticket.id)
+      // isTicketBlocked is a dead PRLT-1299 stub; read the provider-populated field instead
+      const blocked = Boolean(ticket.blockedBy && ticket.blockedBy.length > 0)
       if (blocked) {
         skippedBlocked++
         continue
@@ -229,8 +228,8 @@ export default class Pull extends PMOCommand {
             if (pulled.length >= targetCount) break
             if ((categoryCounts.get(ratio.category) || 0) >= targetForCat) break
 
-            // eslint-disable-next-line no-await-in-loop -- Sequential dependency check
-            const blocked = await this.storage.isTicketBlocked(ticket.id)
+            // isTicketBlocked is a dead PRLT-1299 stub; read the provider-populated field instead
+            const blocked = Boolean(ticket.blockedBy && ticket.blockedBy.length > 0)
             if (blocked) continue
 
             pulled.push({
