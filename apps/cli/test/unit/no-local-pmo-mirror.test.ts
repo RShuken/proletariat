@@ -212,6 +212,9 @@ describe('PRLT-1231: resolveProjectProvider uses Linear when configured', () => 
           return {
             get: (key: string) => {
               if (key === 'linear.api_key') return { value: 'test-api-key' }
+              // PRLT-1325: auto-resolution requires HQ-local team config too,
+              // not just the API key — otherwise it falls back to PMO.
+              if (key === 'linear.default_team_key') return { value: 'OL' }
               return undefined
             },
             all: () => [],
@@ -348,5 +351,51 @@ describe('PRLT-1231: moveTicketByIntent for external providers', () => {
     // For PMO provider, local storage WAS called
     expect(moveCalls).to.have.lengthOf(1)
     expect(moveCalls[0].ticketId).to.equal('TKT-001')
+  })
+
+  // PRLT-1299 regression: the real SQLiteStorage.getProjectBoard() throws
+  // "Local ticket store is dead" — the happy mock above masked this. An external
+  // transition must NOT depend on the dead local board to resolve column names.
+  it('still moves via external provider when getProjectBoard throws (dead local store)', async () => {
+    const { moveTicketByIntent } = await import('../../src/lib/work-lifecycle/transition.js')
+    const moveCalls: Array<{ projectId: string; ticketId: string; columnName: string }> = []
+    const storage = createMockStorage({ moveCalls })
+    // Simulate the dead local PMO store.
+    storage.getProjectBoard = async () => {
+      throw new Error('SQLiteStorage.getProjectBoard() removed (PRLT-1299). Local ticket store is dead.')
+    }
+
+    // No transition map, no settings → resolution falls back to the default
+    // column name for the intent ("Done" for completed).
+    const mockDb = {
+      prepare: () => ({ get: () => undefined, all: () => [], run: () => {} }),
+      exec: () => {},
+      pragma: () => {},
+    } as any
+
+    const externalMoveCalls: Array<{ ticketId: string; newState: string }> = []
+    const mockExternalProvider = {
+      name: 'linear' as const,
+      moveTicket: async (ticketId: string, newState: string) => {
+        externalMoveCalls.push({ ticketId, newState })
+        return { success: true, provider: 'linear' as const }
+      },
+    }
+
+    const result = await moveTicketByIntent({
+      db: mockDb,
+      storage,
+      ticket: { id: 'OL-195', projectId: 'proj-1', statusName: 'In Progress' },
+      intent: 'completed',
+      providerName: 'pmo',
+      resolveProvider: async () => mockExternalProvider as any,
+    })
+
+    expect(result.moved).to.be.true
+    expect(result.targetColumn).to.equal('Done')
+    // Local PMO storage.moveTicket was NOT called; external provider WAS.
+    expect(moveCalls).to.have.lengthOf(0)
+    expect(externalMoveCalls).to.have.lengthOf(1)
+    expect(externalMoveCalls[0].newState).to.equal('Done')
   })
 })

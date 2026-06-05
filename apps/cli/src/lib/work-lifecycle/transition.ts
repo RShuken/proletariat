@@ -67,12 +67,21 @@ export function resolveIntentToColumn(
   providerName: string,
   columnNames: string[],
 ): string | null {
+  // When the board's columns can't be enumerated (external provider — the local
+  // PMO board store is dead, so columnNames is empty), trust the mapped/settings
+  // name verbatim; the provider validates the target state when the ticket moves.
+  const matchColumn = (name: string | null | undefined): string | null => {
+    if (!name) return null
+    if (columnNames.length === 0) return name
+    return findColumnByName(columnNames, name)
+  }
+
   // 1. Check pmo_transition_map
   try {
     const store = new TransitionMapStore(db)
     const mappedName = store.resolveIntent(providerName, intent)
     if (mappedName) {
-      const match = findColumnByName(columnNames, mappedName)
+      const match = matchColumn(mappedName)
       if (match) return match
     }
   } catch {
@@ -83,7 +92,7 @@ export function resolveIntentToColumn(
   const columnType = INTENT_TO_COLUMN_TYPE[intent]
   if (columnType) {
     const settingName = getWorkColumnSetting(db, columnType)
-    const match = findColumnByName(columnNames, settingName)
+    const match = matchColumn(settingName)
     if (match) return match
   }
 
@@ -121,8 +130,18 @@ export async function moveTicketByIntent(opts: {
     return { moved: false, message: 'Ticket has no project' }
   }
 
-  const board = await storage.getProjectBoard(ticket.projectId)
-  const columnNames = board ? board.columns.map(col => col.name) : []
+  // PRLT-1299: the local PMO board store is dead for external providers (Linear,
+  // etc.) — getProjectBoard() throws there. That must not abort the transition:
+  // the target column comes from the transition map / settings, and the provider
+  // validates the state when the ticket is actually moved. Fall back to no local
+  // columns so resolveIntentToColumn trusts the mapped name verbatim.
+  let columnNames: string[] = []
+  try {
+    const board = await storage.getProjectBoard(ticket.projectId)
+    columnNames = board ? board.columns.map(col => col.name) : []
+  } catch {
+    columnNames = []
+  }
 
   const targetColumn = resolveIntentToColumn(db, intent, providerName, columnNames)
   if (!targetColumn) {
