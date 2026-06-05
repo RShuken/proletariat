@@ -22,7 +22,8 @@ describe('Work Transition — resolveIntentToColumn', () => {
         provider_state_id TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(provider, intent)
+        -- Match migration 0025 (many-to-one): conflict target is the 3-col unique
+        UNIQUE(provider, intent, provider_state_name)
       )
     `)
     db.exec(`
